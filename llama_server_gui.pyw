@@ -363,7 +363,7 @@ class LlamaGUI:
             params.extend(["--mmproj", mmproj_quoted])
         
         if self.no_mmproj_offload.get():
-            params.append("--no-mmproj-offload")
+            params.extend(["--no-mmproj-offload"])
         
         extra_text = self.extra_params.get("1.0", tk.END).strip()
         if extra_text:
@@ -493,12 +493,16 @@ class LlamaGUI:
             def read_output():
                 try:
                     if self.process and self.process.stdout:
-                        for line in iter(self.process.stdout.readline, ''):
-                            if not self.running:
-                                break
-                            if line:
-                                self.append_output(line)
-                            if self.process.poll() is not None:
+                        while True:
+                            try:
+                                line = self.process.stdout.readline()
+                                if not line:
+                                    break
+                                if not self.running:
+                                    break
+                                if line:
+                                    self.append_output(line)
+                            except:
                                 break
                 except Exception as e:
                     self.append_output(f"Ошибка чтения вывода: {e}\n")
@@ -562,12 +566,17 @@ class LlamaGUI:
                 if not result:
                     if not silent:
                         self.append_output("Не удалось отправить Ctrl+C\n")
+                # Ожидаем до 1.5 секунд
+                for _ in range(3):
+                    time.sleep(0.5)
+                    if self.process.poll() is not None:
+                        break
             except Exception as e:
                 if not silent:
                     self.append_output(f"Ошибка при отправке Ctrl+C: {e}\n")
 
-        # Ожидаем до 3 секунд
-        for _ in range(6):
+        # Ожидаем до 1.5 секунд
+        for _ in range(3):
             time.sleep(0.5)
             if self.process.poll() is not None:
                 break
@@ -587,7 +596,7 @@ class LlamaGUI:
         if not silent:
             self.append_output("Завершение через terminate()...\n")
         self.process.terminate()
-        for _ in range(4):
+        for _ in range(2):
             time.sleep(0.5)
             if self.process.poll() is not None:
                 break
@@ -610,6 +619,7 @@ class LlamaGUI:
             try:
                 subprocess.run(f'taskkill /F /T /PID {pid}', shell=True, capture_output=True, timeout=5)
                 time.sleep(1)
+                # Проверяем, что процесс действительно остановлен
                 if self.process.poll() is not None:
                     if not silent:
                         self.append_output(f"✅ Процесс cmd остановлен\n")
