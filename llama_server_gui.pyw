@@ -63,7 +63,7 @@ class CollapsibleFrame(ttk.Frame):
 class LlamaGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("llama.cpp GUI Server Launcher")
+        self.root.title("LLaMA GUI Server Launcher")
         self.root.geometry("850x720")
         self.root.minsize(750, 650)
         self.root.configure(bg="#f5f5f5")
@@ -122,7 +122,7 @@ class LlamaGUI:
         # Заголовок
         header = ttk.Frame(main)
         header.pack(fill=tk.X, pady=(0, 12))
-        ttk.Label(header, text="🦙 llama.cpp GUI Server Launcher", font=('Segoe UI', 14, 'bold')).pack()
+        ttk.Label(header, text="🦙 LLaMA GUI Server Launcher", font=('Segoe UI', 14, 'bold')).pack()
         
         # === Модель ===
         model_frame = ttk.LabelFrame(main, text="Модель", padding="8")
