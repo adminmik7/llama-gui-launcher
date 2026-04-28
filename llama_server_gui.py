@@ -6,6 +6,7 @@ import threading
 import shlex
 import time
 import sys
+import signal
 
 class ToolTip:
     def __init__(self, widget, text):
@@ -211,7 +212,7 @@ class LlamaGUI:
         self.extra_params = tk.Text(extra_frame, height=2, wrap=tk.WORD, font=('Consolas', 9), 
                                      borderwidth=1, relief=tk.SOLID, bg="white")
         self.extra_params.pack(fill=tk.X)
-        self.extra_params.insert("1.0", "--jinja --color on")
+        self.extra_params.insert("1.0", "--jinja")
         ToolTip(self.extra_params, "Дополнительные аргументы командной строки для сервера")
         
         # === Кнопки ===
@@ -369,9 +370,8 @@ class LlamaGUI:
                 f.write(f'{command}\n')
                 f.write('echo.\n')
                 f.write('echo Сервер остановлен\n')
-                f.write('echo Нажмите любую клавишу...\n')
-                f.write('pause >nul\n')
-                f.write(f'del /f /q "{self.bat_file}" 2>nul\n')
+                f.write('echo.\n')
+                f.write('pause\n')
         except Exception as e:
             messagebox.showerror("Ошибка", str(e))
             return
@@ -385,12 +385,11 @@ class LlamaGUI:
     
     def run_process(self):
         try:
-            creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            
+            # Запускаем процесс с отдельной консолью
             self.process = subprocess.Popen(
                 [self.bat_file],
                 shell=True,
-                creationflags=creation_flags,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -421,19 +420,82 @@ class LlamaGUI:
             self.root.after(0, self.reset_buttons)
     
     def stop_model(self):
+        """Остановка сервера с гарантированным завершением процесса и выгрузкой из памяти"""
         if self.process and self.process.poll() is None:
-            self.append_output("\n🛑 Остановка сервера...\n")
+            self.append_output("\n" + "="*50 + "\n")
+            self.append_output("🛑 Остановка сервера...\n")
+            
             try:
-                self.process.terminate()
-                self.process.wait(timeout=5)
+                pid = self.process.pid
+                self.append_output(f"Процесс PID: {pid}\n")
+                
+                # Способ 1: Отправляем Ctrl+C через GenerateConsoleCtrlEvent
+                if os.name == 'nt':
+                    self.append_output("Отправка сигнала завершения (Ctrl+C)...\n")
+                    try:
+                        import ctypes
+                        CTRL_C_EVENT = 0
+                        kernel32 = ctypes.windll.kernel32
+                        
+                        result = kernel32.GenerateConsoleCtrlEvent(CTRL_C_EVENT, pid)
+                        if result:
+                            self.append_output("Сигнал завершения отправлен\n")
+                            time.sleep(5)
+                        else:
+                            self.append_output("Не удалось отправить Ctrl+C, пробуем другие методы\n")
+                    except Exception as e:
+                        self.append_output(f"Ошибка при отправке Ctrl+C: {str(e)}\n")
+                
+                # Способ 2: Пробуем завершить через terminate()
                 if self.process.poll() is None:
+                    self.append_output("Завершение процесса через terminate()...\n")
+                    self.process.terminate()
+                    time.sleep(2)
+                
+                # Способ 3: Принудительное завершение через taskkill (Windows)
+                if self.process.poll() is None and os.name == 'nt':
+                    self.append_output("Принудительное завершение через taskkill...\n")
+                    try:
+                        subprocess.run(f'taskkill /F /T /PID {pid}', shell=True, capture_output=True)
+                        time.sleep(1)
+                    except Exception as e:
+                        self.append_output(f"Ошибка taskkill: {str(e)}\n")
+                
+                # Способ 4: Последняя попытка - kill()
+                if self.process.poll() is None:
+                    self.append_output("Финальное принудительное завершение...\n")
+                    self.process.kill()
+                    self.process.wait(timeout=3)
+                
+                # Проверяем результат
+                if self.process.poll() is not None:
+                    self.append_output(f"✅ Сервер успешно остановлен. Код выхода: {self.process.returncode}\n")
+                    self.append_output("💾 Модель выгружена из памяти\n")
+                else:
+                    self.append_output("⚠️ Процесс не завершился, но будет продолжена попытка...\n")
+                    
+                # Дополнительная проверка - ищем процессы llama-server
+                if os.name == 'nt':
+                    self.append_output("Проверка остаточных процессов...\n")
+                    result = subprocess.run('tasklist /FI "IMAGENAME eq llama-server.exe" /FO CSV', 
+                                          shell=True, capture_output=True, text=True)
+                    if "llama-server.exe" in result.stdout:
+                        self.append_output("Обнаружены остаточные процессы, завершаем...\n")
+                        subprocess.run('taskkill /F /IM llama-server.exe /T', shell=True, capture_output=True)
+                        self.append_output("Остаточные процессы завершены\n")
+                
+                self.append_output("="*50 + "\n")
+                
+            except Exception as e:
+                self.append_output(f"❌ Ошибка при остановке: {str(e)}\n")
+                try:
                     self.process.kill()
                     self.process.wait()
-                self.append_output("✅ Сервер остановлен\n")
-            except Exception as e:
-                self.append_output(f"❌ Ошибка: {str(e)}\n")
+                    self.append_output("✅ Процесс принудительно завершен\n")
+                except:
+                    self.append_output("❌ Не удалось завершить процесс\n")
         else:
-            self.append_output("ℹ️ Нет активного сервера\n")
+            self.append_output("ℹ️ Нет активного сервера для остановки\n")
     
     def reset_buttons(self):
         self.start_btn.config(state=tk.NORMAL)
