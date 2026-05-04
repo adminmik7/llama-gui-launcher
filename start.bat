@@ -1,0 +1,2 @@
+@echo off
+.\llama-server.exe -m "C:\models\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf" --host 192.168.3.151 --port 1515 --n-cpu-moe 32 -ngl 999 -c 120000 --temp 0.8 --min-p 0.0 --no-mmap --flash-attn on --parallel 2 --cache-type-k turbo3 --cache-type-v turbo3 --kv-unified --top-k 20 --top-p 0.95 --metrics -b 512 -ub 512 -t 16 --cont-batching --jinja --reasoning-budget 0 --chat-template-kwargs "{\"preserve_thinking\":true}"
