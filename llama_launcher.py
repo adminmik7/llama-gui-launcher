@@ -228,7 +228,7 @@ class LlamaLauncherApp:
         # Custom extra args
         ttk.Label(frame, text="Доп. аргументы:").grid(row=row, column=0, sticky='w', pady=(8, 5))
         self.extra_args_var = tk.StringVar(value="")
-        ttk.Entry(frame, textvariable=self.extra_args_var, width=40).grid(row=row, column=1, sticky='ew', pady=(8, 5), padx=(10, 0))
+        ttk.Entry(frame, textvariable=self.extra_args_var, width=40, state='normal').grid(row=row, column=1, sticky='ew', pady=(8, 5), padx=(10, 0))
         frame.columnconfigure(1, weight=1)
 
     def _create_buttons_frame(self, parent):
@@ -259,7 +259,8 @@ class LlamaLauncherApp:
         log_frame.pack(fill='both', expand=True)
 
         self.log_text = tk.Text(log_frame, font=('Consolas', 9), state='disabled',
-                                   borderwidth=0, wrap='word')
+                                   borderwidth=0, wrap='word',
+                                   bg='#000000', fg='#ffffff')
         scrollbar = ttk.Scrollbar(log_frame, orient='vertical', command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
 
@@ -392,7 +393,8 @@ class LlamaLauncherApp:
                 text=True,
                 bufsize=1,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
 
             # Monitor thread
@@ -536,7 +538,7 @@ class LlamaLauncherApp:
                 self.moe_var.set(config["moe"])
             if config.get("reasoning"):
                 self.reasoning_var.set(config["reasoning"])
-            if config.get("extra_args"):
+            if "extra_args" in config:
                 self.extra_args_var.set(config["extra_args"])
 
             for k, v in config.get("advanced", {}).items():
@@ -549,6 +551,12 @@ class LlamaLauncherApp:
 
 
 def main():
+    import ctypes
+    if ctypes.windll.kernel32.GetConsoleWindow():
+        ctypes.windll.kernel32.FreeConsole()
+        pythonw = sys.executable
+        args = [pythonw] + sys.argv
+        os.execv(pythonw, args)
     root = tk.Tk()
     app = LlamaLauncherApp(root)
     root.mainloop()
