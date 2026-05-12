@@ -140,7 +140,8 @@ class LlamaLauncherApp:
             ("Контекст", "context_size", "120000", 2),
             ("GPU слои", "gpu_layers", "999", 3),
             ("Потоки CPU", "threads", str(os.cpu_count() or 4), 4),
-            ("Batch size", "batch_size", "1024", 5),
+           ("Batch size", "batch_size", "512", 5),
+            ("UBatch size", "ubatch_size", "512", 6),
         ]
 
         self.server_vars = {}
@@ -318,6 +319,7 @@ class LlamaLauncherApp:
             "gpu_layers": ("GPU слои", 0, 1000),
             "threads": ("Потоки CPU", 1, 1024),
             "batch_size": ("Batch size", 1, 4096),
+            "ubatch_size": ("UBatch size", 1, 4096),
         }
         for key, (label, min_v, max_v) in server_fields.items():
             val = self.server_vars.get(key, tk.StringVar()).get()
@@ -397,6 +399,7 @@ class LlamaLauncherApp:
             "--top-p", self.gen_vars["top_p"].get(),
             "-t", self.server_vars["threads"].get(),
             "-b", self.server_vars["batch_size"].get(),
+            "--ubatch-size", self.server_vars["ubatch_size"].get(),
             "--parallel", self.gen_vars["parallel"].get(),
         ]
 
