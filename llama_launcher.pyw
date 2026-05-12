@@ -370,7 +370,7 @@ class LlamaLauncherApp:
     def _select_mmproj(self):
         path = filedialog.askopenfilename(
             title="Выберите mmproj файл",
-            filetypes=[("MMProj файлы", "*.mmproj"), ("Все файлы", "*.*")]
+            filetypes=[("MMProj файлы", "*.gguf"), ("Все файлы", "*.*")]
         )
         if path:
             self.mmproj_path_var.set(path)
