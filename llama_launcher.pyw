@@ -27,7 +27,6 @@ class LlamaLauncherApp:
         self.log_lines = []
         self.is_running = False
         self._setup_styles()
-        self._auto_detect_server()
         self._create_ui()
 
     def _setup_styles(self):
@@ -136,7 +135,7 @@ class LlamaLauncherApp:
             local_ip = "0.0.0.0"
         params = [
             ("Хост", "host", local_ip, 0),
-            ("Порт", "port", "", 1),
+            ("Порт", "port", "1414", 1),
             ("Контекст", "context_size", "120000", 2),
             ("GPU слои", "gpu_layers", "999", 3),
             ("Потоки CPU", "threads", str(os.cpu_count() or 4), 4),
@@ -273,30 +272,6 @@ class LlamaLauncherApp:
 
     # === Helper Methods ===
 
-    def _auto_detect_server(self):
-        paths_to_check = []
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        paths_to_check.append(os.path.join(script_dir, "llama-server.exe"))
-        paths_to_check.append(os.path.join(script_dir, "server.exe"))
-        common_paths = [
-            r"C:\Program Files\llama.cpp\llama-server.exe",
-            r"C:\Program Files\llama.cpp\server.exe",
-            r"D:\Program Files\llama.cpp\llama-server.exe",
-            r"D:\Program Files\llama.cpp\server.exe",
-        ]
-        paths_to_check.extend(common_paths)
-        try:
-            path_from_env = shutil.which("llama-server") or shutil.which("server")
-            if path_from_env:
-                paths_to_check.append(path_from_env)
-        except Exception:
-            pass
-        for p in paths_to_check:
-            if os.path.isfile(p):
-                self.server_path_var = tk.StringVar(value=p)
-                return
-        self.server_path_var = tk.StringVar()
-
     def _validate_numeric(self, field_name, value, min_val=None, max_val=None, allow_float=False):
         try:
             if allow_float:
@@ -316,16 +291,26 @@ class LlamaLauncherApp:
         server_fields = {
             "port": ("Порт", 1, 65535),
             "context_size": ("Контекст", 1, 1000000),
-            "gpu_layers": ("GPU слои", 0, 1000),
+            "gpu_layers": ("GPU слои", 1, 1000),
             "threads": ("Потоки CPU", 1, 1024),
             "batch_size": ("Batch size", 1, 4096),
             "ubatch_size": ("UBatch size", 1, 4096),
         }
         for key, (label, min_v, max_v) in server_fields.items():
+            if key == "gpu_layers":
+                continue
             val = self.server_vars.get(key, tk.StringVar()).get()
             ok, err = self._validate_numeric(label, val, min_v, max_v)
             if not ok:
                 errors.append(err)
+        gpu_layers_val = self.server_vars["gpu_layers"].get().strip()
+        if gpu_layers_val:
+            try:
+                num = int(gpu_layers_val)
+                if num != -1 and num < 1:
+                    errors.append("GPU слои должно быть -1 или >= 1")
+            except ValueError:
+                errors.append("GPU слои должно быть числом")
         gen_fields = {
             "temp": ("Temperature", 0.01, 2.0, True),
             "top_k": ("Top-k", 1, 500, False),
