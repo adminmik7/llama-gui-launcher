@@ -72,7 +72,7 @@ class LlamaLauncherApp:
         self._create_log_panel(config_frame)
 
     def _create_model_section(self, parent):
-        frame = ttk.LabelFrame(parent, text="", padding=12, style='Card.TFrame')
+        frame = ttk.Frame(parent, padding=12, style='Card.TFrame')
         frame.pack(fill='x', pady=(0, 8))
 
       # Server path
@@ -510,6 +510,11 @@ class LlamaLauncherApp:
                 self.root.after(0, self._log, line.rstrip())
         except Exception:
             pass
+        exit_code = self.server_process.poll()
+        if exit_code is not None:
+            self.root.after(0, self._log, f"Сервер завершил работу с кодом {exit_code}")
+        else:
+            self.root.after(0, self._log, "Сервер завершился")
         self.root.after(0, self._on_server_stopped)
 
     def _on_server_stopped(self):
