@@ -241,7 +241,7 @@ class LlamaLauncherApp:
 
         row = 3
         ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
-        self.extra_args_var = tk.StringVar(value="")
+        self.extra_args_var = tk.StringVar(value="--repeat-penalty 1.1")
         ttk.Entry(right_col, textvariable=self.extra_args_var, width=18).grid(row=row + 1, column=0, columnspan=2, sticky='ew', pady=(0, 5))
         right_col.columnconfigure(0, weight=1)
 
@@ -393,7 +393,7 @@ class LlamaLauncherApp:
         cmd.extend(["--host", self.server_vars["host"].get()])
         cmd.extend(["--port", self.server_vars["port"].get()])
         if self.server_enabled.get("gpu_layers", True):
-            cmd.extend(["--gpu-layers", self.server_vars["gpu_layers"].get()])
+            cmd.extend(["-ngl", self.server_vars["gpu_layers"].get()])
         if self.server_enabled.get("context_size", True):
             cmd.extend(["-c", self.server_vars["context_size"].get()])
         if self.server_enabled.get("threads", True):
@@ -401,7 +401,7 @@ class LlamaLauncherApp:
         if self.server_enabled.get("batch_size", True):
             cmd.extend(["-b", self.server_vars["batch_size"].get()])
         if self.server_enabled.get("ubatch_size", True):
-            cmd.extend(["--ubatch-size", self.server_vars["ubatch_size"].get()])
+            cmd.extend(["-ub", self.server_vars["ubatch_size"].get()])
 
         if self.gen_enabled.get("temp", True):
             cmd.extend(["--temp", self.gen_vars["temp"].get()])
@@ -416,6 +416,8 @@ class LlamaLauncherApp:
         mmproj_path = self.mmproj_path_var.get().strip()
         if mmproj_path and os.path.exists(mmproj_path):
             cmd.extend(["--mmproj", mmproj_path])
+        else:
+            cmd.append("--no-mmproj")
 
         # Cache types
         if self.cache_k_enabled.get():
@@ -425,7 +427,7 @@ class LlamaLauncherApp:
 
         # Advanced flags
         if self.flash_attn_var.get():
-            cmd.extend(["--flash-attn", "on"])
+            cmd.extend(["-fa", "on"])
         if self.cont_batching_var.get():
             cmd.append("--cont-batching")
         if self.jinja_var.get():
@@ -663,7 +665,7 @@ class LlamaLauncherApp:
             self.reasoning_var.set(config["reasoning"])
         if config.get("reasoning_enabled"):
             self.reasoning_enabled.set(config["reasoning_enabled"])
-        if "extra_args" in config:
+        if "extra_args" in config and config["extra_args"]:
             self.extra_args_var.set(config["extra_args"])
 
         for k, v in config.get("advanced", {}).items():
@@ -672,8 +674,11 @@ class LlamaLauncherApp:
 
     def _on_closing(self):
         if self.server_process and self.server_process.poll() is None:
-            self.server_process.terminate()
-        self.root.destroy()
+            if messagebox.askyesno("Предупреждение", "Сервер запущен. Закрыть приложение и остановить сервер?"):
+                self.server_process.terminate()
+                self.root.destroy()
+        else:
+            self.root.destroy()
 
 
 def main():
