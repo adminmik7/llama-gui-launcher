@@ -1,33 +1,28 @@
-"""
-Llama.cpp Model Launcher — GUI приложение для запуска llama-server
-Создано на основе рекомендаций по оптимизации запуска MoE моделей
-"""
-
 import os
 import socket
-import sys
 import subprocess
-import shutil
+import shlex
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
-import re
+
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama_launcher_config.json")
 
 
 class LlamaLauncherApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Llama.cpp Model Launcher")
-        self.root.geometry("800x800")
+        self.root.title("llama launcher")
+        self.root.geometry("840x800")
         self.root.minsize(700, 660)
-
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         self.server_process = None
-        self.log_lines = []
         self.is_running = False
         self._setup_styles()
         self._create_ui()
+        self._auto_load_config()
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -77,7 +72,7 @@ class LlamaLauncherApp:
         self._create_log_panel(config_frame)
 
     def _create_model_section(self, parent):
-        frame = ttk.LabelFrame(parent, text="📦 Модель", padding=12, style='Card.TFrame')
+        frame = ttk.LabelFrame(parent, text="", padding=12, style='Card.TFrame')
         frame.pack(fill='x', pady=(0, 8))
 
       # Server path
@@ -139,11 +134,12 @@ class LlamaLauncherApp:
             ("Контекст", "context_size", "120000", 2),
             ("GPU слои", "gpu_layers", "999", 3),
             ("Потоки CPU", "threads", str(os.cpu_count() or 4), 4),
-           ("Batch size", "batch_size", "512", 5),
+            ("Batch size", "batch_size", "512", 5),
             ("UBatch size", "ubatch_size", "512", 6),
         ]
 
         self.server_vars = {}
+        self.server_enabled = {}
         for idx, (label, key, default, row) in enumerate(params):
             ttk.Label(left_col, text=label + ":").grid(row=row, column=0, sticky='w', pady=2)
             var = tk.StringVar(value=default)
@@ -151,6 +147,10 @@ class LlamaLauncherApp:
             width = 18
             entry = ttk.Entry(left_col, textvariable=var, width=width)
             entry.grid(row=row, column=1, sticky='w', padx=(6, 0))
+            if key not in ("host", "port"):
+                enabled = tk.BooleanVar(value=True)
+                self.server_enabled[key] = enabled
+                ttk.Checkbutton(left_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
 
         # Middle column — Generation
         mid_col = ttk.LabelFrame(frame, text="🎯 Генерация", padding=10, style='Card.TFrame')
@@ -164,12 +164,16 @@ class LlamaLauncherApp:
         ]
 
         self.gen_vars = {}
+        self.gen_enabled = {}
         for label, key, default, row in gen_params:
             ttk.Label(mid_col, text=label + ":").grid(row=row, column=0, sticky='w', pady=2)
             var = tk.StringVar(value=default)
             self.gen_vars[key] = var
+            enabled = tk.BooleanVar(value=True)
+            self.gen_enabled[key] = enabled
             entry = ttk.Entry(mid_col, textvariable=var, width=18)
             entry.grid(row=row, column=1, sticky='w', padx=(6, 0))
+            ttk.Checkbutton(mid_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
 
         ttk.Label(mid_col, text="KV-cache K:").grid(row=4, column=0, sticky='w', pady=2)
         self.cache_k_var = tk.StringVar(value="turbo3")
@@ -177,6 +181,8 @@ class LlamaLauncherApp:
                                      values=["f16", "q8_0", "q4_0", "q4_1", "q5_0", "q5_1", "turbo3", "turbo4"],
                                      state='readonly', width=15)
         cache_k_combo.grid(row=4, column=1, sticky='w', padx=(6, 0))
+        self.cache_k_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(mid_col, variable=self.cache_k_enabled).grid(row=4, column=2, sticky='e', padx=(4, 0))
 
         ttk.Label(mid_col, text="KV-cache V:").grid(row=5, column=0, sticky='w', pady=2)
         self.cache_v_var = tk.StringVar(value="turbo3")
@@ -184,14 +190,20 @@ class LlamaLauncherApp:
                                      values=["f16", "q8_0", "q4_0", "q4_1", "q5_0", "q5_1", "turbo3", "turbo4"],
                                      state='readonly', width=15)
         cache_v_combo.grid(row=5, column=1, sticky='w', padx=(6, 0))
+        self.cache_v_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(mid_col, variable=self.cache_v_enabled).grid(row=5, column=2, sticky='e', padx=(4, 0))
 
         ttk.Label(mid_col, text="CPU MoE:").grid(row=7, column=0, sticky='w', pady=2)
         self.moe_var = tk.StringVar(value="0")
         ttk.Entry(mid_col, textvariable=self.moe_var, width=18).grid(row=7, column=1, sticky='w', padx=(6, 0))
+        self.moe_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(mid_col, variable=self.moe_enabled).grid(row=7, column=2, sticky='e', padx=(4, 0))
 
         ttk.Label(mid_col, text="Reasoning:").grid(row=8, column=0, sticky='w', pady=2)
         self.reasoning_var = tk.StringVar(value="0")
         ttk.Entry(mid_col, textvariable=self.reasoning_var, width=18).grid(row=8, column=1, sticky='w', padx=(6, 0))
+        self.reasoning_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(mid_col, variable=self.reasoning_enabled).grid(row=8, column=2, sticky='e', padx=(4, 0))
 
         # Right column — Advanced (moved from separate section)
         right_col = ttk.LabelFrame(frame, text="🔧 Дополнительно", padding=10, style='Card.TFrame')
@@ -241,8 +253,9 @@ class LlamaLauncherApp:
                                      command=self._start_server)
         self.start_btn.pack(side='left', padx=5, expand=True, fill='x')
 
-        ttk.Button(frame, text="⏹ Остановить", style='Danger.TButton',
-                    command=self._stop_server).pack(side='left', padx=5, expand=True, fill='x')
+        self.stop_btn = ttk.Button(frame, text="⏹ Остановить", style='Danger.TButton',
+                    command=self._stop_server, state='disabled')
+        self.stop_btn.pack(side='left', padx=5, expand=True, fill='x')
 
         ttk.Button(frame, text="💾 Сохранить конфиг", style='Info.TButton',
                     command=self._save_config).pack(side='left', padx=5, expand=True, fill='x')
@@ -375,18 +388,29 @@ class LlamaLauncherApp:
         cmd = [
             server_path,
             "-m", model_path,
-            "--host", self.server_vars["host"].get(),
-            "--port", self.server_vars["port"].get(),
-            "--gpu-layers", self.server_vars["gpu_layers"].get(),
-            "-c", self.server_vars["context_size"].get(),
-            "--temp", self.gen_vars["temp"].get(),
-            "--top-k", self.gen_vars["top_k"].get(),
-            "--top-p", self.gen_vars["top_p"].get(),
-            "-t", self.server_vars["threads"].get(),
-            "-b", self.server_vars["batch_size"].get(),
-            "--ubatch-size", self.server_vars["ubatch_size"].get(),
-            "--parallel", self.gen_vars["parallel"].get(),
         ]
+
+        cmd.extend(["--host", self.server_vars["host"].get()])
+        cmd.extend(["--port", self.server_vars["port"].get()])
+        if self.server_enabled.get("gpu_layers", True):
+            cmd.extend(["--gpu-layers", self.server_vars["gpu_layers"].get()])
+        if self.server_enabled.get("context_size", True):
+            cmd.extend(["-c", self.server_vars["context_size"].get()])
+        if self.server_enabled.get("threads", True):
+            cmd.extend(["-t", self.server_vars["threads"].get()])
+        if self.server_enabled.get("batch_size", True):
+            cmd.extend(["-b", self.server_vars["batch_size"].get()])
+        if self.server_enabled.get("ubatch_size", True):
+            cmd.extend(["--ubatch-size", self.server_vars["ubatch_size"].get()])
+
+        if self.gen_enabled.get("temp", True):
+            cmd.extend(["--temp", self.gen_vars["temp"].get()])
+        if self.gen_enabled.get("top_k", True):
+            cmd.extend(["--top-k", self.gen_vars["top_k"].get()])
+        if self.gen_enabled.get("top_p", True):
+            cmd.extend(["--top-p", self.gen_vars["top_p"].get()])
+        if self.gen_enabled.get("parallel", True):
+            cmd.extend(["--parallel", self.gen_vars["parallel"].get()])
 
         # MMProj
         mmproj_path = self.mmproj_path_var.get().strip()
@@ -394,7 +418,10 @@ class LlamaLauncherApp:
             cmd.extend(["--mmproj", mmproj_path])
 
         # Cache types
-        cmd.extend(["--cache-type-k", self.cache_k_var.get(), "--cache-type-v", self.cache_v_var.get()])
+        if self.cache_k_enabled.get():
+            cmd.extend(["--cache-type-k", self.cache_k_var.get()])
+        if self.cache_v_enabled.get():
+            cmd.extend(["--cache-type-v", self.cache_v_var.get()])
 
         # Advanced flags
         if self.flash_attn_var.get():
@@ -409,12 +436,12 @@ class LlamaLauncherApp:
             cmd.append("--kv-unified")
 
         # MoE
-        if self.moe_var.get().strip():
+        if self.moe_enabled.get() and self.moe_var.get().strip():
             cmd.extend(["--n-cpu-moe", self.moe_var.get().strip()])
 
         # Reasoning
         reasoning = self.reasoning_var.get().strip()
-        if reasoning:
+        if self.reasoning_enabled.get() and reasoning:
             cmd.extend(["--reasoning-budget", reasoning])
 
         # Chat template kwargs
@@ -423,7 +450,7 @@ class LlamaLauncherApp:
 
         # Extra args
         if self.extra_args_var.get().strip():
-            cmd.extend(self.extra_args_var.get().strip().split())
+            cmd.extend(shlex.split(self.extra_args_var.get().strip()))
 
         return cmd
 
@@ -443,6 +470,7 @@ class LlamaLauncherApp:
 
         self.is_running = True
         self.start_btn.configure(text="⏳ Запуск...", state='disabled')
+        self.stop_btn.configure(state='normal')
         self._log("Команда: " + " ".join(cmd))
         self._log("Запуск сервера...")
 
@@ -466,6 +494,7 @@ class LlamaLauncherApp:
             self._log(f"Ошибка запуска: {e}")
             self.is_running = False
             self.start_btn.configure(text="▶ Запустить", state='normal')
+            self.stop_btn.configure(state='disabled')
 
     def _monitor_process(self):
         if self.server_process is None:
@@ -479,33 +508,28 @@ class LlamaLauncherApp:
                 self.root.after(0, self._log, line.rstrip())
         except Exception:
             pass
-        self.root.after(0, self._log, f"[Завершено] Код выхода: {self.server_process.returncode}")
         self.root.after(0, self._on_server_stopped)
 
     def _on_server_stopped(self):
         self.is_running = False
         self.start_btn.configure(text="▶ Запустить", state='normal')
+        self.stop_btn.configure(state='disabled')
 
     def _stop_server(self):
         if self.server_process and self.server_process.poll() is None:
             self._log("Остановка сервера...")
             self.server_process.terminate()
-            try:
-                self.server_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.server_process.kill()
-            self._log("Сервер остановлен.")
-            self._on_server_stopped()
+            self._poll_stop()
         else:
             self._log("Сервер не запущен.")
             self._on_server_stopped()
 
-    def _copy_command(self):
-        cmd = self._build_command()
-        if cmd:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(" ".join(cmd))
-            messagebox.showinfo("Инфо", "Команда скопирована в буфер обмена!")
+    def _poll_stop(self):
+        if self.server_process and self.server_process.poll() is None:
+            self.root.after(200, self._poll_stop)
+        else:
+            self._log("Сервер остановлен.")
+            self._on_server_stopped()
 
     def _copy_selected(self, event=None):
         try:
@@ -532,11 +556,6 @@ class LlamaLauncherApp:
         finally:
             menu.grab_release()
 
-    def _clear_log(self):
-        self.log_text.configure(state='normal')
-        self.log_text.delete("1.0", tk.END)
-        self.log_text.configure(state='disabled')
-
     def _log(self, message):
         self.log_text.configure(state='normal')
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -547,29 +566,39 @@ class LlamaLauncherApp:
     def _save_config(self):
         path = filedialog.asksaveasfilename(
             title="Сохранить конфиг",
+            initialfile="llama_launcher_config.json",
+            initialdir=os.path.dirname(os.path.abspath(__file__)),
             defaultextension=".json",
             filetypes=[("JSON", "*.json")]
         )
         if not path:
             return
+        self._write_config(path)
+        messagebox.showinfo("Инфо", f"Конфиг сохранён: {path}")
 
+    def _write_config(self, path):
         config = {
             "model": self.model_var.get(),
             "server_path": self.server_path_var.get(),
             "mmproj_path": self.mmproj_path_var.get(),
             "server": {k: v.get() for k, v in self.server_vars.items()},
+            "server_enabled": {k: v.get() for k, v in self.server_enabled.items()},
             "generation": {k: v.get() for k, v in self.gen_vars.items()},
+            "gen_enabled": {k: v.get() for k, v in self.gen_enabled.items()},
             "cache_k": self.cache_k_var.get(),
             "cache_v": self.cache_v_var.get(),
+            "cache_k_enabled": self.cache_k_enabled.get(),
+            "cache_v_enabled": self.cache_v_enabled.get(),
             "moe": self.moe_var.get(),
+            "moe_enabled": self.moe_enabled.get(),
             "reasoning": self.reasoning_var.get(),
+            "reasoning_enabled": self.reasoning_enabled.get(),
             "advanced": {k: v.get() for k, v in self.adv_vars.items()},
             "extra_args": self.extra_args_var.get(),
         }
 
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
-        messagebox.showinfo("Инфо", f"Конфиг сохранён: {path}")
 
     def _load_config(self):
         path = filedialog.askopenfilename(
@@ -582,39 +611,69 @@ class LlamaLauncherApp:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-
-            if config.get("model"):
-                self.model_var.set(config["model"])
-            if config.get("server_path"):
-                self.server_path_var.set(config["server_path"])
-            if config.get("mmproj_path"):
-                self.mmproj_path_var.set(config["mmproj_path"])
-
-            for k, v in config.get("server", {}).items():
-                if k in self.server_vars:
-                    self.server_vars[k].set(v)
-            for k, v in config.get("generation", {}).items():
-                if k in self.gen_vars:
-                    self.gen_vars[k].set(v)
-
-            if config.get("cache_k"):
-                self.cache_k_var.set(config["cache_k"])
-            if config.get("cache_v"):
-                self.cache_v_var.set(config["cache_v"])
-            if config.get("moe"):
-                self.moe_var.set(config["moe"])
-            if config.get("reasoning"):
-                self.reasoning_var.set(config["reasoning"])
-            if "extra_args" in config:
-                self.extra_args_var.set(config["extra_args"])
-
-            for k, v in config.get("advanced", {}).items():
-                if k in self.adv_vars:
-                    self.adv_vars[k].set(v)
-
+            self._apply_config(config)
             messagebox.showinfo("Инфо", f"Конфиг загружен: {path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка загрузки конфига: {e}")
+
+    def _auto_load_config(self):
+        if not os.path.exists(_CONFIG_PATH):
+            return
+        try:
+            with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            self._apply_config(config)
+        except Exception:
+            pass
+
+    def _apply_config(self, config):
+        if config.get("model"):
+            self.model_var.set(config["model"])
+        if config.get("server_path"):
+            self.server_path_var.set(config["server_path"])
+        if config.get("mmproj_path"):
+            self.mmproj_path_var.set(config["mmproj_path"])
+
+        for k, v in config.get("server", {}).items():
+            if k in self.server_vars:
+                self.server_vars[k].set(v)
+        for k, v in config.get("server_enabled", {}).items():
+            if k in self.server_enabled:
+                self.server_enabled[k].set(v)
+        for k, v in config.get("generation", {}).items():
+            if k in self.gen_vars:
+                self.gen_vars[k].set(v)
+        for k, v in config.get("gen_enabled", {}).items():
+            if k in self.gen_enabled:
+                self.gen_enabled[k].set(v)
+
+        if config.get("cache_k"):
+            self.cache_k_var.set(config["cache_k"])
+        if config.get("cache_v"):
+            self.cache_v_var.set(config["cache_v"])
+        if config.get("cache_k_enabled"):
+            self.cache_k_enabled.set(config["cache_k_enabled"])
+        if config.get("cache_v_enabled"):
+            self.cache_v_enabled.set(config["cache_v_enabled"])
+        if config.get("moe"):
+            self.moe_var.set(config["moe"])
+        if config.get("moe_enabled"):
+            self.moe_enabled.set(config["moe_enabled"])
+        if config.get("reasoning"):
+            self.reasoning_var.set(config["reasoning"])
+        if config.get("reasoning_enabled"):
+            self.reasoning_enabled.set(config["reasoning_enabled"])
+        if "extra_args" in config:
+            self.extra_args_var.set(config["extra_args"])
+
+        for k, v in config.get("advanced", {}).items():
+            if k in self.adv_vars:
+                self.adv_vars[k].set(v)
+
+    def _on_closing(self):
+        if self.server_process and self.server_process.poll() is None:
+            self.server_process.terminate()
+        self.root.destroy()
 
 
 def main():
