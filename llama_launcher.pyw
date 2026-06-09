@@ -7,10 +7,22 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 import json
-
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama_launcher_config.json")
-
-
+_LAST_CONFIG_META = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_config_path")
+def _get_last_config_path():
+    try:
+        with open(_LAST_CONFIG_META, 'r', encoding='utf-8') as f:
+            path = f.read().strip()
+        if path and os.path.exists(path):
+            return path
+    except Exception:
+        pass
+    return None
+def _save_last_config_path(path):
+    try:
+        with open(_LAST_CONFIG_META, 'w', encoding='utf-8') as f:
+            f.write(path)
+    except Exception:
+        pass
 class LlamaLauncherApp:
     def __init__(self, root):
         self.root = root
@@ -20,110 +32,77 @@ class LlamaLauncherApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         self.server_process = None
         self.is_running = False
+        self._dirty = False
         self._setup_styles()
         self._create_ui()
         self._auto_load_config()
-
+        self._register_dirty_traces()
+        self._center_window()
     def _setup_styles(self):
         style = ttk.Style()
         try:
             style.theme_use('vista')
         except tk.TclError:
             style.theme_use('clam')
-
         self.root.configure(bg='#f0f0f0')
-
-        style.configure('Title.TLabel',
-                        foreground='#1a73e8',
-                        font=('Segoe UI', 18, 'bold'))
-
-        style.configure('Section.TLabel',
-                        font=('Segoe UI', 11, 'bold'))
-
         style.configure('Card.TFrame', background='#f0f0f0')
-        style.configure('Card.TLabel', background='#f0f0f0')
-
-        style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'))
         style.configure('Danger.TButton', font=('Segoe UI', 10, 'bold'))
         style.configure('Success.TButton', font=('Segoe UI', 10, 'bold'))
         style.configure('Info.TButton', font=('Segoe UI', 10))
-
         style.configure('TEntry', font=('Segoe UI', 10))
         style.configure('TCombobox', font=('Segoe UI', 10))
         style.configure('TLabel', font=('Segoe UI', 10))
         style.configure('TCheckbutton', font=('Segoe UI', 10))
         style.configure('TRadiobutton', font=('Segoe UI', 10))
-
-        style.configure('Treeview', font=('Segoe UI', 9))
-        style.configure('Treeview.Heading', font=('Segoe UI', 9, 'bold'))
-
+    def _center_window(self):
+        self.root.update_idletasks()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        x = (self.root.winfo_screenwidth() - w) // 2
+        y = (self.root.winfo_screenheight() - h) // 2
+        self.root.geometry(f'+{x}+{y}')
     def _create_ui(self):
-        # === Main Content ===
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill='both', expand=True, padx=10, pady=5)
-
-        # Configuration panel
         config_frame = ttk.Frame(main_frame, style='Card.TFrame')
         config_frame.pack(side='left', fill='both', expand=True, padx=(0, 8))
-
         self._create_model_section(config_frame)
         self._create_server_gen_section(config_frame)
         self._create_buttons_frame(config_frame)
         self._create_log_panel(config_frame)
-
     def _create_model_section(self, parent):
         frame = ttk.Frame(parent, padding=12, style='Card.TFrame')
         frame.pack(fill='x', pady=(0, 8))
-
-      # Server path
         ttk.Label(frame, text="Путь к llama-server.exe:").grid(row=0, column=0, sticky='w', pady=4)
-
         server_frame = ttk.Frame(frame)
         server_frame.grid(row=0, column=1, sticky='ew', padx=(10, 0))
-
         self.server_path_var = tk.StringVar()
         self.server_path_entry = ttk.Entry(server_frame, textvariable=self.server_path_var)
         self.server_path_entry.pack(side='left', fill='x', expand=True, ipady=4)
-
         ttk.Button(server_frame, text="📂 Выбрать", command=self._select_server,
                    style='Info.TButton').pack(side='right', padx=(5, 0))
-
-        # Model path
         ttk.Label(frame, text="Файл модели (.gguf):").grid(row=1, column=0, sticky='w', pady=4)
-
         model_frame = ttk.Frame(frame)
         model_frame.grid(row=1, column=1, sticky='ew', padx=(10, 0))
-
         self.model_var = tk.StringVar()
         self.model_entry = ttk.Entry(model_frame, textvariable=self.model_var)
         self.model_entry.pack(side='left', fill='x', expand=True, ipady=4)
-
         ttk.Button(model_frame, text="📂 Выбрать", command=self._select_model,
                    style='Info.TButton').pack(side='right', padx=(5, 0))
-
-        # MMProj path
         ttk.Label(frame, text="Файл mmproj (визуализация):").grid(row=2, column=0, sticky='w', pady=4)
-
         mmproj_frame = ttk.Frame(frame)
         mmproj_frame.grid(row=2, column=1, sticky='ew', padx=(10, 0))
-
         self.mmproj_path_var = tk.StringVar()
         self.mmproj_path_entry = ttk.Entry(mmproj_frame, textvariable=self.mmproj_path_var)
         self.mmproj_path_entry.pack(side='left', fill='x', expand=True, ipady=4)
-
         ttk.Button(mmproj_frame, text="📂 Выбрать", command=self._select_mmproj,
                    style='Info.TButton').pack(side='right', padx=(5, 0))
-
         frame.columnconfigure(1, weight=1)
-
     def _create_server_gen_section(self, parent):
         frame = ttk.Frame(parent)
         frame.pack(fill='both', expand=True, pady=(0, 8))
-
-        # Left column — Server
         left_col = ttk.LabelFrame(frame, text="⚙️ Сервер", padding=10, style='Card.TFrame')
         left_col.pack(side='left', fill='both', expand=True, padx=(0, 1))
-
         try:
             local_ip = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith('127.')][0]
         except (IndexError, socket.gaierror):
@@ -137,7 +116,6 @@ class LlamaLauncherApp:
             ("Batch size", "batch_size", "512", 5),
             ("UBatch size", "ubatch_size", "512", 6),
         ]
-
         self.server_vars = {}
         self.server_enabled = {}
         for idx, (label, key, default, row) in enumerate(params):
@@ -151,18 +129,14 @@ class LlamaLauncherApp:
                 enabled = tk.BooleanVar(value=True)
                 self.server_enabled[key] = enabled
                 ttk.Checkbutton(left_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
-
-        # Middle column — Generation
         mid_col = ttk.LabelFrame(frame, text="🎯 Генерация", padding=10, style='Card.TFrame')
         mid_col.pack(side='left', fill='both', expand=True, padx=(1, 1))
-
         gen_params = [
             ("Temperature", "temp", "0.6", 0),
             ("Top-k", "top_k", "20", 1),
             ("Top-p", "top_p", "0.95", 2),
             ("Parallel", "parallel", "2", 3),
         ]
-
         self.gen_vars = {}
         self.gen_enabled = {}
         for label, key, default, row in gen_params:
@@ -174,48 +148,40 @@ class LlamaLauncherApp:
             entry = ttk.Entry(mid_col, textvariable=var, width=18)
             entry.grid(row=row, column=1, sticky='w', padx=(6, 0))
             ttk.Checkbutton(mid_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
-
         ttk.Label(mid_col, text="KV-cache K:").grid(row=4, column=0, sticky='w', pady=2)
-        self.cache_k_var = tk.StringVar(value="turbo3")
+        self.cache_k_var = tk.StringVar(value="q4_0")
         cache_k_combo = ttk.Combobox(mid_col, textvariable=self.cache_k_var,
-                                     values=["f16", "q8_0", "q4_0", "q4_1", "q5_0", "q5_1", "turbo3", "turbo4"],
+                                     values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
                                      state='readonly', width=15)
         cache_k_combo.grid(row=4, column=1, sticky='w', padx=(6, 0))
         self.cache_k_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.cache_k_enabled).grid(row=4, column=2, sticky='e', padx=(4, 0))
-
         ttk.Label(mid_col, text="KV-cache V:").grid(row=5, column=0, sticky='w', pady=2)
-        self.cache_v_var = tk.StringVar(value="turbo3")
+        self.cache_v_var = tk.StringVar(value="q4_0")
         cache_v_combo = ttk.Combobox(mid_col, textvariable=self.cache_v_var,
-                                     values=["f16", "q8_0", "q4_0", "q4_1", "q5_0", "q5_1", "turbo3", "turbo4"],
+                                     values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
                                      state='readonly', width=15)
         cache_v_combo.grid(row=5, column=1, sticky='w', padx=(6, 0))
         self.cache_v_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.cache_v_enabled).grid(row=5, column=2, sticky='e', padx=(4, 0))
-
         ttk.Label(mid_col, text="CPU MoE:").grid(row=7, column=0, sticky='w', pady=2)
         self.moe_var = tk.StringVar(value="0")
         ttk.Entry(mid_col, textvariable=self.moe_var, width=18).grid(row=7, column=1, sticky='w', padx=(6, 0))
         self.moe_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.moe_enabled).grid(row=7, column=2, sticky='e', padx=(4, 0))
-
         ttk.Label(mid_col, text="Reasoning:").grid(row=8, column=0, sticky='w', pady=2)
         self.reasoning_var = tk.StringVar(value="0")
         ttk.Entry(mid_col, textvariable=self.reasoning_var, width=18).grid(row=8, column=1, sticky='w', padx=(6, 0))
         self.reasoning_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.reasoning_enabled).grid(row=8, column=2, sticky='e', padx=(4, 0))
-
-        # Right column — Advanced (moved from separate section)
         right_col = ttk.LabelFrame(frame, text="🔧 Дополнительно", padding=10, style='Card.TFrame')
         right_col.pack(side='left', fill='both', expand=True, padx=(1, 0))
-
         self.flash_attn_var = tk.BooleanVar(value=True)
         self.cont_batching_var = tk.BooleanVar(value=True)
         self.jinja_var = tk.BooleanVar(value=True)
         self.no_mmap_var = tk.BooleanVar(value=True)
         self.kv_unified_var = tk.BooleanVar(value=True)
         self.preserve_thinking_var = tk.BooleanVar(value=True)
-
         self.adv_vars = {
             "flash_attn": self.flash_attn_var,
             "cont_batching": self.cont_batching_var,
@@ -224,7 +190,6 @@ class LlamaLauncherApp:
             "kv_unified": self.kv_unified_var,
             "preserve_thinking": self.preserve_thinking_var,
         }
-
         labels = {
             "flash_attn": "Flash Attention",
             "cont_batching": "Continual Batching",
@@ -233,58 +198,59 @@ class LlamaLauncherApp:
             "kv_unified": "KV Unified",
             "preserve_thinking": "Preserve Thinking",
         }
-
         for idx, (key, var) in enumerate(self.adv_vars.items()):
             r = idx // 2
             c = idx % 2
             ttk.Checkbutton(right_col, text=labels[key], variable=var).grid(row=r, column=c, sticky='w', padx=(0, 10), pady=2)
-
         row = 3
         ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
         self.extra_args_var = tk.StringVar(value="--repeat-penalty 1.1")
         ttk.Entry(right_col, textvariable=self.extra_args_var, width=18).grid(row=row + 1, column=0, columnspan=2, sticky='ew', pady=(0, 5))
         right_col.columnconfigure(0, weight=1)
-
     def _create_buttons_frame(self, parent):
         frame = ttk.Frame(parent)
         frame.pack(fill='x', pady=(5, 0))
-
         self.start_btn = ttk.Button(frame, text="▶ Запустить", style='Success.TButton',
                                      command=self._start_server)
         self.start_btn.pack(side='left', padx=5, expand=True, fill='x')
-
         self.stop_btn = ttk.Button(frame, text="⏹ Остановить", style='Danger.TButton',
                     command=self._stop_server, state='disabled')
         self.stop_btn.pack(side='left', padx=5, expand=True, fill='x')
-
         ttk.Button(frame, text="💾 Сохранить конфиг", style='Info.TButton',
                     command=self._save_config).pack(side='left', padx=5, expand=True, fill='x')
-
         ttk.Button(frame, text="📂 Загрузить конфиг", style='Info.TButton',
                     command=self._load_config).pack(side='left', padx=5, expand=True, fill='x')
-
     def _create_log_panel(self, parent):
         frame = ttk.LabelFrame(parent, text="📝 Лог сервера", padding=10, style='Card.TFrame')
         frame.pack(fill='both', expand=True)
-
         log_frame = ttk.Frame(frame)
         log_frame.pack(fill='both', expand=True)
-
         self.log_text = tk.Text(log_frame, font=('Consolas', 9), state='disabled',
                                    borderwidth=0, wrap='word',
                                    bg='#000000', fg='#ffffff')
         scrollbar = ttk.Scrollbar(log_frame, orient='vertical', command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
-
         self.log_text.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
-
         self.log_text.bind('<Control-c>', self._copy_selected)
         self.log_text.bind('<Control-C>', self._copy_selected)
         self.log_text.bind('<Button-3>', self._log_context_menu)
-
-    # === Helper Methods ===
-
+    def _mark_dirty(self, *_args):
+        if not self._dirty:
+            self._dirty = True
+    def _register_dirty_traces(self):
+        for var in [self.server_path_var, self.model_var, self.mmproj_path_var,
+                     self.cache_k_var, self.cache_v_var, self.moe_var, self.reasoning_var,
+                     self.extra_args_var]:
+            var.trace_add('write', self._mark_dirty)
+        for var in list(self.server_vars.values()) + list(self.gen_vars.values()):
+            var.trace_add('write', self._mark_dirty)
+        for var in (list(self.server_enabled.values()) + list(self.gen_enabled.values()) +
+                     [self.cache_k_enabled, self.cache_v_enabled, self.moe_enabled,
+                      self.reasoning_enabled] +
+                     [self.flash_attn_var, self.cont_batching_var, self.jinja_var,
+                      self.no_mmap_var, self.kv_unified_var, self.preserve_thinking_var]):
+            var.trace_add('write', self._mark_dirty)
     def _validate_numeric(self, field_name, value, min_val=None, max_val=None, allow_float=False):
         try:
             if allow_float:
@@ -298,7 +264,6 @@ class LlamaLauncherApp:
         if max_val is not None and num > max_val:
             return False, f"{field_name} должно быть <= {max_val}"
         return True, ""
-
     def _validate_all(self):
         errors = []
         server_fields = {
@@ -346,9 +311,6 @@ class LlamaLauncherApp:
             if not ok:
                 errors.append(err)
         return errors
-
-    # === Actions ===
-
     def _select_model(self):
         path = filedialog.askopenfilename(
             title="Выберите GGUF модель",
@@ -356,7 +318,6 @@ class LlamaLauncherApp:
         )
         if path:
             self.model_var.set(path)
-
     def _select_server(self):
         path = filedialog.askopenfilename(
             title="Выберите llama-server.exe",
@@ -364,7 +325,6 @@ class LlamaLauncherApp:
         )
         if path:
             self.server_path_var.set(path)
-
     def _select_mmproj(self):
         path = filedialog.askopenfilename(
             title="Выберите mmproj файл",
@@ -372,24 +332,19 @@ class LlamaLauncherApp:
         )
         if path:
             self.mmproj_path_var.set(path)
-
     def _build_command(self):
         server_path = self.server_path_var.get()
         model_path = self.model_var.get()
-
         if not server_path or not os.path.exists(server_path):
             messagebox.showerror("Ошибка", "Укажите путь к llama-server.exe")
             return None
-
         if not model_path or not os.path.exists(model_path):
             messagebox.showerror("Ошибка", "Укажите путь к GGUF модели")
             return None
-
         cmd = [
             server_path,
             "-m", model_path,
         ]
-
         cmd.extend(["--host", self.server_vars["host"].get()])
         cmd.extend(["--port", self.server_vars["port"].get()])
         if self.server_enabled.get("gpu_layers", True):
@@ -402,7 +357,6 @@ class LlamaLauncherApp:
             cmd.extend(["-b", self.server_vars["batch_size"].get()])
         if self.server_enabled.get("ubatch_size", True):
             cmd.extend(["-ub", self.server_vars["ubatch_size"].get()])
-
         if self.gen_enabled.get("temp", True):
             cmd.extend(["--temp", self.gen_vars["temp"].get()])
         if self.gen_enabled.get("top_k", True):
@@ -411,21 +365,15 @@ class LlamaLauncherApp:
             cmd.extend(["--top-p", self.gen_vars["top_p"].get()])
         if self.gen_enabled.get("parallel", True):
             cmd.extend(["--parallel", self.gen_vars["parallel"].get()])
-
-        # MMProj
         mmproj_path = self.mmproj_path_var.get().strip()
         if mmproj_path and os.path.exists(mmproj_path):
             cmd.extend(["--mmproj", mmproj_path])
         else:
             cmd.append("--no-mmproj")
-
-        # Cache types
         if self.cache_k_enabled.get():
             cmd.extend(["--cache-type-k", self.cache_k_var.get()])
         if self.cache_v_enabled.get():
             cmd.extend(["--cache-type-v", self.cache_v_var.get()])
-
-        # Advanced flags
         if self.flash_attn_var.get():
             cmd.extend(["-fa", "on"])
         if self.cont_batching_var.get():
@@ -436,46 +384,32 @@ class LlamaLauncherApp:
             cmd.append("--no-mmap")
         if self.kv_unified_var.get():
             cmd.append("--kv-unified")
-
-        # MoE
         if self.moe_enabled.get() and self.moe_var.get().strip():
             cmd.extend(["--n-cpu-moe", self.moe_var.get().strip()])
-
-        # Reasoning
         reasoning = self.reasoning_var.get().strip()
         if self.reasoning_enabled.get() and reasoning:
             cmd.extend(["--reasoning-budget", reasoning])
-
-        # Chat template kwargs
         if self.preserve_thinking_var.get():
             cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":true}'])
-
-        # Extra args
         if self.extra_args_var.get().strip():
             cmd.extend(shlex.split(self.extra_args_var.get().strip()))
-
         return cmd
-
     def _start_server(self):
         if self.is_running:
             messagebox.showwarning("Внимание", "Сервер уже запущен!")
             return
-
         errors = self._validate_all()
         if errors:
             messagebox.showerror("Ошибка валидации", "\n".join(errors))
             return
-
         cmd = self._build_command()
         if cmd is None:
             return
-
         self.is_running = True
         self.start_btn.configure(text="⏳ Запуск...", state='disabled')
         self.stop_btn.configure(state='normal')
         self._log("Команда: " + " ".join(cmd))
         self._log("Запуск сервера...")
-
         try:
             self.server_process = subprocess.Popen(
                 cmd,
@@ -487,21 +421,16 @@ class LlamaLauncherApp:
                 errors='replace',
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
-
-            # Monitor thread
             monitor_thread = threading.Thread(target=self._monitor_process, daemon=True)
             monitor_thread.start()
-
         except Exception as e:
             self._log(f"Ошибка запуска: {e}")
             self.is_running = False
             self.start_btn.configure(text="▶ Запустить", state='normal')
             self.stop_btn.configure(state='disabled')
-
     def _monitor_process(self):
         if self.server_process is None:
             return
-
         try:
             while True:
                 line = self.server_process.stdout.readline()
@@ -516,12 +445,10 @@ class LlamaLauncherApp:
         else:
             self.root.after(0, self._log, "Сервер завершился")
         self.root.after(0, self._on_server_stopped)
-
     def _on_server_stopped(self):
         self.is_running = False
         self.start_btn.configure(text="▶ Запустить", state='normal')
         self.stop_btn.configure(state='disabled')
-
     def _stop_server(self):
         if self.server_process and self.server_process.poll() is None:
             self._log("Остановка сервера...")
@@ -530,14 +457,12 @@ class LlamaLauncherApp:
         else:
             self._log("Сервер не запущен.")
             self._on_server_stopped()
-
     def _poll_stop(self):
         if self.server_process and self.server_process.poll() is None:
             self.root.after(200, self._poll_stop)
         else:
             self._log("Сервер остановлен.")
             self._on_server_stopped()
-
     def _copy_selected(self, event=None):
         try:
             selected = self.log_text.get("sel.first", "sel.last")
@@ -548,7 +473,6 @@ class LlamaLauncherApp:
             pass
         if event is not None:
             return "break"
-
     def _log_context_menu(self, event):
         try:
             self.log_text.edit_modified(False)
@@ -562,14 +486,12 @@ class LlamaLauncherApp:
                 menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
-
     def _log(self, message):
         self.log_text.configure(state='normal')
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.log_text.see(tk.END)
         self.log_text.configure(state='disabled')
-
     def _save_config(self):
         path = filedialog.asksaveasfilename(
             title="Сохранить конфиг",
@@ -581,8 +503,8 @@ class LlamaLauncherApp:
         if not path:
             return
         self._write_config(path)
+        _save_last_config_path(path)
         messagebox.showinfo("Инфо", f"Конфиг сохранён: {path}")
-
     def _write_config(self, path):
         config = {
             "model": self.model_var.get(),
@@ -603,10 +525,8 @@ class LlamaLauncherApp:
             "advanced": {k: v.get() for k, v in self.adv_vars.items()},
             "extra_args": self.extra_args_var.get(),
         }
-
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
-
     def _load_config(self):
         path = filedialog.askopenfilename(
             title="Загрузить конфиг",
@@ -614,25 +534,24 @@ class LlamaLauncherApp:
         )
         if not path:
             return
-
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             self._apply_config(config)
+            _save_last_config_path(path)
             messagebox.showinfo("Инфо", f"Конфиг загружен: {path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка загрузки конфига: {e}")
-
     def _auto_load_config(self):
-        if not os.path.exists(_CONFIG_PATH):
+        path = _get_last_config_path()
+        if not path:
             return
         try:
-            with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             self._apply_config(config)
         except Exception:
             pass
-
     def _apply_config(self, config):
         if config.get("model"):
             self.model_var.set(config["model"])
@@ -640,7 +559,6 @@ class LlamaLauncherApp:
             self.server_path_var.set(config["server_path"])
         if config.get("mmproj_path"):
             self.mmproj_path_var.set(config["mmproj_path"])
-
         for k, v in config.get("server", {}).items():
             if k in self.server_vars:
                 self.server_vars[k].set(v)
@@ -653,7 +571,6 @@ class LlamaLauncherApp:
         for k, v in config.get("gen_enabled", {}).items():
             if k in self.gen_enabled:
                 self.gen_enabled[k].set(v)
-
         if config.get("cache_k"):
             self.cache_k_var.set(config["cache_k"])
         if config.get("cache_v"):
@@ -672,25 +589,30 @@ class LlamaLauncherApp:
             self.reasoning_enabled.set(config["reasoning_enabled"])
         if "extra_args" in config and config["extra_args"]:
             self.extra_args_var.set(config["extra_args"])
-
         for k, v in config.get("advanced", {}).items():
             if k in self.adv_vars:
                 self.adv_vars[k].set(v)
-
     def _on_closing(self):
         if self.server_process and self.server_process.poll() is None:
-            if messagebox.askyesno("Предупреждение", "Сервер запущен. Закрыть приложение и остановить сервер?"):
-                self.server_process.terminate()
-                self.root.destroy()
-        else:
-            self.root.destroy()
-
-
+            if not messagebox.askyesno("Предупреждение", "Сервер запущен. Закрыть приложение и остановить сервер?"):
+                return
+            self.server_process.terminate()
+        if self._dirty:
+            result = messagebox.askokcancel(
+                "Сохранение",
+                "Параметры были изменены. Сохранить конфиг перед закрытием?",
+                icon="question"
+            )
+            if result is True:
+                self._save_config()
+            elif result is False:
+                pass
+            else:
+                return
+        self.root.destroy()
 def main():
     root = tk.Tk()
     app = LlamaLauncherApp(root)
     root.mainloop()
-
-
 if __name__ == "__main__":
     main()
