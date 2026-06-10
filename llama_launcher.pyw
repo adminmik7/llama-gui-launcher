@@ -193,6 +193,10 @@ class LlamaLauncherApp:
         self.no_mmap_var = tk.BooleanVar(value=True)
         self.kv_unified_var = tk.BooleanVar(value=True)
         self.preserve_thinking_var = tk.BooleanVar(value=True)
+        self.cache_prompt_var = tk.BooleanVar(value=True)
+        self.swa_full_var = tk.BooleanVar(value=True)
+        self.ctx_checkpoints_var = tk.BooleanVar(value=True)
+        self.repeat_penalty_var = tk.BooleanVar(value=True)
         self.adv_vars = {
             "flash_attn": self.flash_attn_var,
             "cont_batching": self.cont_batching_var,
@@ -200,6 +204,10 @@ class LlamaLauncherApp:
             "no_mmap": self.no_mmap_var,
             "kv_unified": self.kv_unified_var,
             "preserve_thinking": self.preserve_thinking_var,
+            "cache_prompt": self.cache_prompt_var,
+            "swa_full": self.swa_full_var,
+            "ctx_checkpoints": self.ctx_checkpoints_var,
+            "repeat_penalty": self.repeat_penalty_var,
         }
         labels = {
             "flash_attn": "Flash Attention",
@@ -208,15 +216,15 @@ class LlamaLauncherApp:
             "no_mmap": "No MMAP (Windows)",
             "kv_unified": "KV Unified",
             "preserve_thinking": "Preserve Thinking",
+            "cache_prompt": "Cache Prompt",
+            "swa_full": "SWA Full",
+            "ctx_checkpoints": "Ctx Checkpoints",
+            "repeat_penalty": "Repeat Penalty 1.0",
         }
         for idx, (key, var) in enumerate(self.adv_vars.items()):
             r = idx // 2
             c = idx % 2
             ttk.Checkbutton(right_col, text=labels[key], variable=var).grid(row=r, column=c, sticky='w', padx=(0, 10), pady=2)
-        row = 3
-        ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
-        self.extra_args_var = tk.StringVar(value="--repeat-penalty 1.1")
-        ttk.Entry(right_col, textvariable=self.extra_args_var, width=18).grid(row=row + 1, column=0, columnspan=2, sticky='ew', pady=(0, 5))
         right_col.columnconfigure(0, weight=1)
     def _create_buttons_frame(self, parent):
         frame = ttk.Frame(parent)
@@ -236,7 +244,7 @@ class LlamaLauncherApp:
         frame.pack(fill='both', expand=True)
         log_frame = ttk.Frame(frame)
         log_frame.pack(fill='both', expand=True)
-        self.log_text = tk.Text(log_frame, font=('Consolas', 11), state='disabled',
+        self.log_text = tk.Text(log_frame, font=('Consolas', 10), state='disabled',
                                    borderwidth=0, wrap='word',
                                    bg='#000000', fg='#ffffff')
         scrollbar = ttk.Scrollbar(log_frame, orient='vertical', command=self.log_text.yview)
@@ -251,16 +259,17 @@ class LlamaLauncherApp:
             self._dirty = True
     def _register_dirty_traces(self):
         for var in [self.server_path_var, self.model_var, self.mmproj_path_var, self.chat_template_path_var,
-                     self.cache_k_var, self.cache_v_var, self.moe_var, self.reasoning_var,
-                     self.extra_args_var]:
+                     self.cache_k_var, self.cache_v_var, self.moe_var, self.reasoning_var]:
             var.trace_add('write', self._mark_dirty)
         for var in list(self.server_vars.values()) + list(self.gen_vars.values()):
             var.trace_add('write', self._mark_dirty)
         for var in (list(self.server_enabled.values()) + list(self.gen_enabled.values()) +
                      [self.cache_k_enabled, self.cache_v_enabled, self.moe_enabled,
                       self.reasoning_enabled] +
-                     [self.flash_attn_var, self.cont_batching_var, self.jinja_var,
-                      self.no_mmap_var, self.kv_unified_var, self.preserve_thinking_var]):
+      [self.flash_attn_var, self.cont_batching_var, self.jinja_var,
+                       self.no_mmap_var, self.kv_unified_var, self.preserve_thinking_var,
+                       self.cache_prompt_var, self.swa_full_var, self.ctx_checkpoints_var,
+                       self.repeat_penalty_var]):
             var.trace_add('write', self._mark_dirty)
     def _validate_numeric(self, field_name, value, min_val=None, max_val=None, allow_float=False):
         try:
@@ -405,6 +414,14 @@ class LlamaLauncherApp:
             cmd.append("--no-mmap")
         if self.kv_unified_var.get():
             cmd.append("--kv-unified")
+        if self.cache_prompt_var.get():
+            cmd.append("--cache-prompt")
+        if self.swa_full_var.get():
+            cmd.append("--swa-full")
+        if self.ctx_checkpoints_var.get():
+            cmd.extend(["--ctx-checkpoints", "64"])
+        if self.repeat_penalty_var.get():
+            cmd.extend(["--repeat-penalty", "1.0"])
         if self.moe_enabled.get() and self.moe_var.get().strip():
             cmd.extend(["--n-cpu-moe", self.moe_var.get().strip()])
         reasoning = self.reasoning_var.get().strip()
@@ -412,8 +429,6 @@ class LlamaLauncherApp:
             cmd.extend(["--reasoning-budget", reasoning])
         if self.preserve_thinking_var.get():
             cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":true}'])
-        if self.extra_args_var.get().strip():
-            cmd.extend(shlex.split(self.extra_args_var.get().strip()))
         return cmd
     def _start_server(self):
         if self.is_running:
@@ -571,7 +586,6 @@ class LlamaLauncherApp:
             "reasoning": self.reasoning_var.get(),
             "reasoning_enabled": self.reasoning_enabled.get(),
             "advanced": {k: v.get() for k, v in self.adv_vars.items()},
-            "extra_args": self.extra_args_var.get(),
         }
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
@@ -637,8 +651,6 @@ class LlamaLauncherApp:
             self.reasoning_var.set(config["reasoning"])
         if config.get("reasoning_enabled"):
             self.reasoning_enabled.set(config["reasoning_enabled"])
-        if "extra_args" in config and config["extra_args"]:
-            self.extra_args_var.set(config["extra_args"])
         for k, v in config.get("advanced", {}).items():
             if k in self.adv_vars:
                 self.adv_vars[k].set(v)
