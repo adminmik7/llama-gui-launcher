@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 import json
+import time
 _LAST_CONFIG_META = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_config_path")
 def _get_last_config_path():
     try:
@@ -27,12 +28,14 @@ class LlamaLauncherApp:
     def __init__(self, root):
         self.root = root
         self.root.title("llama GUI")
-        self.root.geometry("840x800")
+        self.root.geometry("820x800")
         self.root.minsize(700, 660)
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         self.server_process = None
         self.is_running = False
         self._dirty = False
+        self._animation_thread = None
+        self._animation_running = False
         self._setup_styles()
         self._create_ui()
         self._auto_load_config()
@@ -130,7 +133,7 @@ class LlamaLauncherApp:
             ttk.Label(left_col, text=label + ":").grid(row=row, column=0, sticky='w', pady=2)
             var = tk.StringVar(value=default)
             self.server_vars[key] = var
-            width = 18
+            width = 14
             entry = ttk.Entry(left_col, textvariable=var, width=width)
             entry.grid(row=row, column=1, sticky='w', padx=(6, 0))
             if key not in ("host", "port"):
@@ -153,33 +156,33 @@ class LlamaLauncherApp:
             self.gen_vars[key] = var
             enabled = tk.BooleanVar(value=True)
             self.gen_enabled[key] = enabled
-            entry = ttk.Entry(mid_col, textvariable=var, width=18)
+            entry = ttk.Entry(mid_col, textvariable=var, width=9)
             entry.grid(row=row, column=1, sticky='w', padx=(6, 0))
             ttk.Checkbutton(mid_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
         ttk.Label(mid_col, text="KV-cache K:").grid(row=4, column=0, sticky='w', pady=2)
         self.cache_k_var = tk.StringVar(value="q4_0")
         cache_k_combo = ttk.Combobox(mid_col, textvariable=self.cache_k_var,
-                                     values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
-                                     state='readonly', width=15)
+                                      values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
+                                      state='readonly', width=6)
         cache_k_combo.grid(row=4, column=1, sticky='w', padx=(6, 0))
         self.cache_k_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.cache_k_enabled).grid(row=4, column=2, sticky='e', padx=(4, 0))
         ttk.Label(mid_col, text="KV-cache V:").grid(row=5, column=0, sticky='w', pady=2)
         self.cache_v_var = tk.StringVar(value="q4_0")
         cache_v_combo = ttk.Combobox(mid_col, textvariable=self.cache_v_var,
-                                     values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
-                                     state='readonly', width=15)
+                                      values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
+                                      state='readonly', width=6)
         cache_v_combo.grid(row=5, column=1, sticky='w', padx=(6, 0))
         self.cache_v_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.cache_v_enabled).grid(row=5, column=2, sticky='e', padx=(4, 0))
         ttk.Label(mid_col, text="CPU MoE:").grid(row=7, column=0, sticky='w', pady=2)
         self.moe_var = tk.StringVar(value="0")
-        ttk.Entry(mid_col, textvariable=self.moe_var, width=18).grid(row=7, column=1, sticky='w', padx=(6, 0))
+        ttk.Entry(mid_col, textvariable=self.moe_var, width=9).grid(row=7, column=1, sticky='w', padx=(6, 0))
         self.moe_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.moe_enabled).grid(row=7, column=2, sticky='e', padx=(4, 0))
         ttk.Label(mid_col, text="Reasoning:").grid(row=8, column=0, sticky='w', pady=2)
         self.reasoning_var = tk.StringVar(value="0")
-        ttk.Entry(mid_col, textvariable=self.reasoning_var, width=18).grid(row=8, column=1, sticky='w', padx=(6, 0))
+        ttk.Entry(mid_col, textvariable=self.reasoning_var, width=9).grid(row=8, column=1, sticky='w', padx=(6, 0))
         self.reasoning_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(mid_col, variable=self.reasoning_enabled).grid(row=8, column=2, sticky='e', padx=(4, 0))
         right_col = ttk.LabelFrame(frame, text="🔧 Дополнительно", padding=10, style='Card.TFrame')
@@ -441,6 +444,7 @@ class LlamaLauncherApp:
             )
             monitor_thread = threading.Thread(target=self._monitor_process, daemon=True)
             monitor_thread.start()
+            self._start_title_animation()
         except Exception as e:
             self._log(f"Ошибка запуска: {e}")
             self.is_running = False
@@ -465,6 +469,30 @@ class LlamaLauncherApp:
         self.is_running = False
         self.start_btn.configure(text="▶ Запустить", state='normal')
         self.stop_btn.configure(state='disabled')
+        self._stop_title_animation()
+
+    def _start_title_animation(self):
+        self._animation_running = True
+        self._animation_thread = threading.Thread(target=self._title_animation_loop, daemon=True)
+        self._animation_thread.start()
+
+    def _stop_title_animation(self):
+        self._animation_running = False
+        if self._animation_thread is not None:
+            self._animation_thread.join(timeout=1.0)
+            self._animation_thread = None
+        self.root.title("llama GUI")
+
+    def _title_animation_loop(self):
+        count = 0
+        while self._animation_running:
+            self.root.after(0, self._set_title_frame, count)
+            count = (count + 1) % 4
+            time.sleep(0.3)
+
+    def _set_title_frame(self, count):
+        if self._animation_running:
+            self.root.title("llama GUI" + (" * " * count).rstrip())
     def _stop_server(self):
         if self.server_process and self.server_process.poll() is None:
             self._log("Остановка сервера...")
