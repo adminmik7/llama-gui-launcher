@@ -58,7 +58,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 |------|----------|--------|
 | Путь к llama-server.exe | Бинарник llama.cpp | `C:\models\llama-server.exe` |
 | Файл модели (.gguf) | GGUF-модель для загрузки | `C:\models\llama-3.1-8b-Q4_K_M.gguf` |
-| Файл mmproj (визуализация) | файл для поддержки vision (опционально) | `C:\models\mmproj-model.gguf` |
+| Файл mmproj (визуализация) | Мульти模态-промпт (опционально) | `C:\models\mmproj-model.gguf` |
 | Файл chat template | Jinja-шаблон для чата (опционально) | `C:\models\qwen_template.jinja` |
 
 ### Шаг 2: Настройка сервера
@@ -172,64 +172,6 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 **Можно ли использовать на Linux/macOS?**
 - Интерфейс Tkinter работает кроссплатформенно, но `creationflags=subprocess.CREATE_NO_WINDOW` оптимизирован под Windows. На Linux/macOS уберите эту опцию в коде.
 
-## Формат конфига
-
-Конфигурация сохраняется в JSON. Пример:
-
-```json
-{
-  "model": "D:/models/llama-3.1-8b-Q4_K_M.gguf",
-  "server_path": "D:/models/llama-server.exe",
-  "mmproj_path": "",
-  "chat_template_path": "",
-  "server": {
-    "host": "192.168.1.100",
-    "port": "1414",
-    "context_size": "120000",
-    "gpu_layers": "999",
-    "threads": "8",
-    "batch_size": "512",
-    "ubatch_size": "512"
-  },
-  "server_enabled": {
-    "context_size": true,
-    "gpu_layers": true,
-    "threads": true,
-    "batch_size": true,
-    "ubatch_size": true
-  },
-  "generation": {
-    "temp": "0.6",
-    "top_k": "20",
-    "top_p": "0.95",
-    "parallel": "2"
-  },
-  "gen_enabled": {
-    "temp": true,
-    "top_k": true,
-    "top_p": true,
-    "parallel": true
-  },
-  "cache_k": "q4_0",
-  "cache_v": "q4_0",
-  "cache_k_enabled": true,
-  "cache_v_enabled": true,
-  "moe": "0",
-  "moe_enabled": true,
-  "reasoning": "0",
-  "reasoning_enabled": true,
-  "advanced": {
-    "flash_attn": true,
-    "cont_batching": true,
-    "jinja": true,
-    "no_mmap": true,
-    "kv_unified": true,
-    "preserve_thinking": true
-  },
-  "extra_args": "--repeat-penalty 1.1"
-}
-```
-
 ## Структура проекта
 
 ```
@@ -257,6 +199,6 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 
 ## Лицензия
 
-Проект распространяется без ограничений. Используйте на своё усмотрение.
+MIT License
 
 
