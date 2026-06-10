@@ -1,4 +1,4 @@
-import os
+﻿import os
 import socket
 import subprocess
 import shlex
@@ -96,6 +96,14 @@ class LlamaLauncherApp:
         self.mmproj_path_entry = ttk.Entry(mmproj_frame, textvariable=self.mmproj_path_var)
         self.mmproj_path_entry.pack(side='left', fill='x', expand=True, ipady=4)
         ttk.Button(mmproj_frame, text="📂 Выбрать", command=self._select_mmproj,
+                   style='Info.TButton').pack(side='right', padx=(5, 0))
+        ttk.Label(frame, text="Файл chat template:").grid(row=3, column=0, sticky='w', pady=4)
+        chat_template_frame = ttk.Frame(frame)
+        chat_template_frame.grid(row=3, column=1, sticky='ew', padx=(10, 0))
+        self.chat_template_path_var = tk.StringVar()
+        self.chat_template_path_entry = ttk.Entry(chat_template_frame, textvariable=self.chat_template_path_var)
+        self.chat_template_path_entry.pack(side='left', fill='x', expand=True, ipady=4)
+        ttk.Button(chat_template_frame, text="📂 Выбрать", command=self._select_chat_template,
                    style='Info.TButton').pack(side='right', padx=(5, 0))
         frame.columnconfigure(1, weight=1)
     def _create_server_gen_section(self, parent):
@@ -239,7 +247,7 @@ class LlamaLauncherApp:
         if not self._dirty:
             self._dirty = True
     def _register_dirty_traces(self):
-        for var in [self.server_path_var, self.model_var, self.mmproj_path_var,
+        for var in [self.server_path_var, self.model_var, self.mmproj_path_var, self.chat_template_path_var,
                      self.cache_k_var, self.cache_v_var, self.moe_var, self.reasoning_var,
                      self.extra_args_var]:
             var.trace_add('write', self._mark_dirty)
@@ -332,6 +340,13 @@ class LlamaLauncherApp:
         )
         if path:
             self.mmproj_path_var.set(path)
+    def _select_chat_template(self):
+        path = filedialog.askopenfilename(
+            title="Выберите файл chat template",
+            filetypes=[("Chat Template", "*.json"), ("Все файлы", "*.*")]
+        )
+        if path:
+            self.chat_template_path_var.set(path)
     def _build_command(self):
         server_path = self.server_path_var.get()
         model_path = self.model_var.get()
@@ -370,6 +385,9 @@ class LlamaLauncherApp:
             cmd.extend(["--mmproj", mmproj_path])
         else:
             cmd.append("--no-mmproj")
+        chat_template_path = self.chat_template_path_var.get().strip()
+        if chat_template_path and os.path.exists(chat_template_path):
+            cmd.extend(["--chat-template-file", chat_template_path])
         if self.cache_k_enabled.get():
             cmd.extend(["--cache-type-k", self.cache_k_var.get()])
         if self.cache_v_enabled.get():
@@ -510,6 +528,7 @@ class LlamaLauncherApp:
             "model": self.model_var.get(),
             "server_path": self.server_path_var.get(),
             "mmproj_path": self.mmproj_path_var.get(),
+            "chat_template_path": self.chat_template_path_var.get(),
             "server": {k: v.get() for k, v in self.server_vars.items()},
             "server_enabled": {k: v.get() for k, v in self.server_enabled.items()},
             "generation": {k: v.get() for k, v in self.gen_vars.items()},
@@ -559,6 +578,8 @@ class LlamaLauncherApp:
             self.server_path_var.set(config["server_path"])
         if config.get("mmproj_path"):
             self.mmproj_path_var.set(config["mmproj_path"])
+        if config.get("chat_template_path"):
+            self.chat_template_path_var.set(config["chat_template_path"])
         for k, v in config.get("server", {}).items():
             if k in self.server_vars:
                 self.server_vars[k].set(v)
