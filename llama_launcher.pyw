@@ -1,4 +1,4 @@
-import os
+﻿import os
 import socket
 import subprocess
 import shlex
@@ -233,7 +233,7 @@ class LlamaLauncherApp:
         frame.pack(fill='both', expand=True)
         log_frame = ttk.Frame(frame)
         log_frame.pack(fill='both', expand=True)
-        self.log_text = tk.Text(log_frame, font=('Consolas', 9), state='disabled',
+        self.log_text = tk.Text(log_frame, font=('Consolas', 11), state='disabled',
                                    borderwidth=0, wrap='word',
                                    bg='#000000', fg='#ffffff')
         scrollbar = ttk.Scrollbar(log_frame, orient='vertical', command=self.log_text.yview)
@@ -459,9 +459,7 @@ class LlamaLauncherApp:
             pass
         exit_code = self.server_process.poll()
         if exit_code is not None:
-            self.root.after(0, self._log, f"Сервер завершил работу с кодом {exit_code}")
-        else:
-            self.root.after(0, self._log, "Сервер завершился")
+            self.root.after(0, self._log, f"Сервер завершил работу с кодом {exit_code}") 
         self.root.after(0, self._on_server_stopped)
     def _on_server_stopped(self):
         self.is_running = False
