@@ -1,4 +1,4 @@
-﻿import os
+import os
 import socket
 import subprocess
 import shlex
@@ -26,7 +26,7 @@ def _save_last_config_path(path):
 class LlamaLauncherApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("llama launcher")
+        self.root.title("llama GUI")
         self.root.geometry("840x800")
         self.root.minsize(700, 660)
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -343,7 +343,7 @@ class LlamaLauncherApp:
     def _select_chat_template(self):
         path = filedialog.askopenfilename(
             title="Выберите файл chat template",
-            filetypes=[("Chat Template", "*.json"), ("Все файлы", "*.*")]
+            filetypes=[("Chat Template", "*.jinja"), ("Все файлы", "*.*")]
         )
         if path:
             self.chat_template_path_var.set(path)
@@ -479,6 +479,8 @@ class LlamaLauncherApp:
         if self.server_process and self.server_process.poll() is None:
             self.root.after(200, self._poll_stop)
         else:
+            if self.server_process:
+                self.server_process.wait()
             self._log("Сервер остановлен.")
             self._on_server_stopped()
     def _copy_selected(self, event=None):
@@ -521,6 +523,7 @@ class LlamaLauncherApp:
         if not path:
             return
         self._write_config(path)
+        self._dirty = False
         _save_last_config_path(path)
         messagebox.showinfo("Инфо", f"Конфиг сохранён: {path}")
     def _write_config(self, path):
