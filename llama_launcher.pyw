@@ -302,7 +302,7 @@ class LlamaLauncherApp:
             "ubatch_size": ("UBatch size", 1, 4096),
         }
         for key, (label, min_v, max_v) in server_fields.items():
-            if key == "gpu_layers":
+            if key == "gpu_layers" and not self.server_enabled.get("gpu_layers", True):
                 continue
             val = self.server_vars.get(key, tk.StringVar()).get()
             ok, err = self._validate_numeric(label, val, min_v, max_v)
@@ -381,24 +381,32 @@ class LlamaLauncherApp:
         ]
         cmd.extend(["--host", self.server_vars["host"].get()])
         cmd.extend(["--port", self.server_vars["port"].get()])
-        if self.server_enabled.get("gpu_layers", True):
-            cmd.extend(["-ngl", self.server_vars["gpu_layers"].get()])
-        if self.server_enabled.get("context_size", True):
-            cmd.extend(["-c", self.server_vars["context_size"].get()])
-        if self.server_enabled.get("threads", True):
-            cmd.extend(["-t", self.server_vars["threads"].get()])
-        if self.server_enabled.get("batch_size", True):
-            cmd.extend(["-b", self.server_vars["batch_size"].get()])
-        if self.server_enabled.get("ubatch_size", True):
-            cmd.extend(["-ub", self.server_vars["ubatch_size"].get()])
-        if self.gen_enabled.get("temp", True):
-            cmd.extend(["--temp", self.gen_vars["temp"].get()])
-        if self.gen_enabled.get("top_k", True):
-            cmd.extend(["--top-k", self.gen_vars["top_k"].get()])
-        if self.gen_enabled.get("top_p", True):
-            cmd.extend(["--top-p", self.gen_vars["top_p"].get()])
-        if self.gen_enabled.get("parallel", True):
-            cmd.extend(["--parallel", self.gen_vars["parallel"].get()])
+        server_enabled_map = self.server_enabled
+        param_mapping = {
+            "context_size": ["-c"],
+            "threads": ["-t"],
+            "batch_size": ["-b"],
+            "ubatch_size": ["-ub"],
+        }
+        for key, flags in param_mapping.items():
+            if key not in server_enabled_map:
+                continue
+            enabled_bool = server_enabled_map[key]
+            if enabled_bool.get():
+                cmd.extend(flags + [self.server_vars[key].get()])
+        gen_enabled_map = self.gen_enabled
+        gen_param_mapping = {
+            "temp": ["--temp"],
+            "top_k": ["--top-k"],
+            "top_p": ["--top-p"],
+            "parallel": ["--parallel"],
+        }
+        for key, flags in gen_param_mapping.items():
+            if key not in gen_enabled_map:
+                continue
+            enabled_bool = gen_enabled_map[key]
+            if enabled_bool.get():
+                cmd.extend(flags + [self.gen_vars[key].get()])
         mmproj_path = self.mmproj_path_var.get().strip()
         if mmproj_path and os.path.exists(mmproj_path):
             cmd.extend(["--mmproj", mmproj_path])
@@ -436,8 +444,13 @@ class LlamaLauncherApp:
             cmd.extend(["--ctx-checkpoints", "64"])
         if self.swa_full_var.get():
             cmd.append("--swa-full")
-        if self.extra_args_var.get().strip():
-            cmd.extend(shlex.split(self.extra_args_var.get().strip()))
+        extra = self.extra_args_var.get().strip()
+        if extra:
+            try:
+                cmd.extend(shlex.split(extra))
+            except ValueError as e:
+                messagebox.showerror("Ошибка", f"Некорректный формат доп. аргументов:\n{e}")
+                return None
         return cmd
     def _start_server(self):
         if self.is_running:
@@ -485,9 +498,11 @@ class LlamaLauncherApp:
                 self.root.after(0, self._log, line.rstrip())
         except Exception:
             pass
-        exit_code = self.server_process.poll()
-        if exit_code is not None:
-            self.root.after(0, self._log, f"Сервер завершил работу с кодом {exit_code}") 
+        try:
+            exit_code = self.server_process.wait()
+        except Exception as e:
+            self.root.after(0, self._log, f"Ошибка получения кода завершения: {e}")
+            return
         self.root.after(0, self._on_server_stopped)
     def _on_server_stopped(self):
         self.is_running = False
@@ -572,7 +587,8 @@ class LlamaLauncherApp:
         )
         if not path:
             return
-        self._write_config(path)
+        if not self._write_config(path):
+            return
         self._dirty = False
         _save_last_config_path(path)
         messagebox.showinfo("Инфо", f"Конфиг сохранён: {path}")
@@ -596,10 +612,13 @@ class LlamaLauncherApp:
             "reasoning_enabled": self.reasoning_enabled.get(),
             "advanced": {k: v.get() for k, v in self.adv_vars.items()},
             "extra_args": self.extra_args_var.get(),
-            "repeat_penalty_value": "1.1",
         }
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить конфиг:\n{e}")
+            return False
     def _load_config(self):
         path = filedialog.askopenfilename(
             title="Загрузить конфиг",
@@ -715,6 +734,10 @@ class LlamaLauncherApp:
             if not messagebox.askyesno("Предупреждение", "Сервер запущен. Закрыть приложение и остановить сервер?"):
                 return
             self.server_process.terminate()
+            try:
+                self.server_process.wait(timeout=5)
+            except Exception:
+                pass
         if self._dirty:
             result = messagebox.askokcancel(
                 "Сохранение",
