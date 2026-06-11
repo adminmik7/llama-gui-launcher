@@ -67,7 +67,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 |------|----------|--------|
 | Путь к llama-server.exe | Бинарник llama.cpp | `C:\models\llama-server.exe` |
 | Файл модели (.gguf) | GGUF-модель для загрузки | `C:\models\llama-3.1-8b-Q4_K_M.gguf` |
-| Файл mmproj (визуализация) | Мульти模态-промпт (опционально) | `C:\models\mmproj-model.gguf` |
+| Файл mmproj (визуализация) | Мультимодальный промпт (опционально) | `C:\models\mmproj-model.gguf` |
 | Файл chat template | Jinja-шаблон для чата (опционально) | `C:\models\qwen_template.jinja` |
 
 ### Шаг 2: Настройка сервера
