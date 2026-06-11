@@ -193,6 +193,10 @@ class LlamaLauncherApp:
         self.no_mmap_var = tk.BooleanVar(value=True)
         self.kv_unified_var = tk.BooleanVar(value=True)
         self.preserve_thinking_var = tk.BooleanVar(value=True)
+        self.repeat_penalty_var = tk.BooleanVar(value=False)
+        self.cache_prompt_var = tk.BooleanVar(value=False)
+        self.ctx_checkpoints_var = tk.BooleanVar(value=False)
+        self.swa_full_var = tk.BooleanVar(value=False)
         self.adv_vars = {
             "flash_attn": self.flash_attn_var,
             "cont_batching": self.cont_batching_var,
@@ -200,6 +204,10 @@ class LlamaLauncherApp:
             "no_mmap": self.no_mmap_var,
             "kv_unified": self.kv_unified_var,
             "preserve_thinking": self.preserve_thinking_var,
+            "repeat_penalty": self.repeat_penalty_var,
+            "cache_prompt": self.cache_prompt_var,
+            "ctx_checkpoints": self.ctx_checkpoints_var,
+            "swa_full": self.swa_full_var,
         }
         labels = {
             "flash_attn": "Flash Attention",
@@ -208,14 +216,18 @@ class LlamaLauncherApp:
             "no_mmap": "No MMAP (Windows)",
             "kv_unified": "KV Unified",
             "preserve_thinking": "Preserve Thinking",
+            "repeat_penalty": "Repeat Penalty",
+            "cache_prompt": "Cache Prompt",
+            "ctx_checkpoints": "Ctx Checkpoints",
+            "swa_full": "SWA Full",
         }
         for idx, (key, var) in enumerate(self.adv_vars.items()):
             r = idx // 2
             c = idx % 2
             ttk.Checkbutton(right_col, text=labels[key], variable=var).grid(row=r, column=c, sticky='w', padx=(0, 10), pady=2)
-        row = 3
+        row = 5
         ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
-        self.extra_args_var = tk.StringVar(value="--repeat-penalty 1.1")
+        self.extra_args_var = tk.StringVar(value="")
         ttk.Entry(right_col, textvariable=self.extra_args_var, width=18).grid(row=row + 1, column=0, columnspan=2, sticky='ew', pady=(0, 5))
         right_col.columnconfigure(0, weight=1)
     def _create_buttons_frame(self, parent):
@@ -231,12 +243,14 @@ class LlamaLauncherApp:
                     command=self._save_config).pack(side='left', padx=5, expand=True, fill='x')
         ttk.Button(frame, text="📂 Загрузить конфиг", style='Info.TButton',
                     command=self._load_config).pack(side='left', padx=5, expand=True, fill='x')
+        ttk.Button(frame, text="✕ Сбросить настройки", style='Info.TButton',
+                    command=self._reset_settings).pack(side='left', padx=5, expand=True, fill='x')
     def _create_log_panel(self, parent):
         frame = ttk.LabelFrame(parent, text="📝 Лог сервера", padding=10, style='Card.TFrame')
         frame.pack(fill='both', expand=True)
         log_frame = ttk.Frame(frame)
         log_frame.pack(fill='both', expand=True)
-        self.log_text = tk.Text(log_frame, font=('Consolas', 11), state='disabled',
+        self.log_text = tk.Text(log_frame, font=('Consolas', 10), state='disabled',
                                    borderwidth=0, wrap='word',
                                    bg='#000000', fg='#ffffff')
         scrollbar = ttk.Scrollbar(log_frame, orient='vertical', command=self.log_text.yview)
@@ -260,7 +274,9 @@ class LlamaLauncherApp:
                      [self.cache_k_enabled, self.cache_v_enabled, self.moe_enabled,
                       self.reasoning_enabled] +
                      [self.flash_attn_var, self.cont_batching_var, self.jinja_var,
-                      self.no_mmap_var, self.kv_unified_var, self.preserve_thinking_var]):
+                      self.no_mmap_var, self.kv_unified_var, self.preserve_thinking_var,
+                      self.repeat_penalty_var, self.cache_prompt_var, self.ctx_checkpoints_var,
+                      self.swa_full_var]):
             var.trace_add('write', self._mark_dirty)
     def _validate_numeric(self, field_name, value, min_val=None, max_val=None, allow_float=False):
         try:
@@ -412,6 +428,14 @@ class LlamaLauncherApp:
             cmd.extend(["--reasoning-budget", reasoning])
         if self.preserve_thinking_var.get():
             cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":true}'])
+        if self.repeat_penalty_var.get():
+            cmd.extend(["--repeat-penalty", "1.1"])
+        if self.cache_prompt_var.get():
+            cmd.append("--cache-prompt")
+        if self.ctx_checkpoints_var.get():
+            cmd.extend(["--ctx-checkpoints", "64"])
+        if self.swa_full_var.get():
+            cmd.append("--swa-full")
         if self.extra_args_var.get().strip():
             cmd.extend(shlex.split(self.extra_args_var.get().strip()))
         return cmd
@@ -572,6 +596,7 @@ class LlamaLauncherApp:
             "reasoning_enabled": self.reasoning_enabled.get(),
             "advanced": {k: v.get() for k, v in self.adv_vars.items()},
             "extra_args": self.extra_args_var.get(),
+            "repeat_penalty_value": "1.1",
         }
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
@@ -590,6 +615,49 @@ class LlamaLauncherApp:
             messagebox.showinfo("Инфо", f"Конфиг загружен: {path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка загрузки конфига: {e}")
+    def _reset_settings(self):
+        if not messagebox.askyesno("Подтверждение", "Сбросить все настройки к значениям по умолчанию?"):
+            return
+        self.server_path_var.set("")
+        self.model_var.set("")
+        self.mmproj_path_var.set("")
+        self.chat_template_path_var.set("")
+        self.server_vars["host"].set("")
+        self.server_vars["port"].set("1414")
+        self.server_vars["context_size"].set("120000")
+        self.server_vars["gpu_layers"].set("999")
+        self.server_vars["threads"].set(str(os.cpu_count() or 4))
+        self.server_vars["batch_size"].set("512")
+        self.server_vars["ubatch_size"].set("512")
+        for key in self.server_enabled:
+            self.server_enabled[key].set(True)
+        self.gen_vars["temp"].set("0.6")
+        self.gen_vars["top_k"].set("20")
+        self.gen_vars["top_p"].set("0.95")
+        self.gen_vars["parallel"].set("2")
+        for key in self.gen_enabled:
+            self.gen_enabled[key].set(True)
+        self.cache_k_var.set("q4_0")
+        self.cache_v_var.set("q4_0")
+        self.cache_k_enabled.set(True)
+        self.cache_v_enabled.set(True)
+        self.moe_var.set("0")
+        self.moe_enabled.set(True)
+        self.reasoning_var.set("0")
+        self.reasoning_enabled.set(True)
+        self.flash_attn_var.set(True)
+        self.cont_batching_var.set(True)
+        self.jinja_var.set(True)
+        self.no_mmap_var.set(True)
+        self.kv_unified_var.set(True)
+        self.preserve_thinking_var.set(True)
+        self.repeat_penalty_var.set(False)
+        self.cache_prompt_var.set(False)
+        self.ctx_checkpoints_var.set(False)
+        self.swa_full_var.set(False)
+        self.extra_args_var.set("")
+        self._dirty = False
+        messagebox.showinfo("Инфо", "Настройки сброшены к значениям по умолчанию")
     def _auto_load_config(self):
         path = _get_last_config_path()
         if not path:
