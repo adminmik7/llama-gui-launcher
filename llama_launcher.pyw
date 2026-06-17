@@ -1,4 +1,5 @@
 import os
+import sys
 import socket
 import subprocess
 import shlex
@@ -296,7 +297,7 @@ class LlamaLauncherApp:
         server_fields = {
             "port": ("Порт", 1, 65535),
             "context_size": ("Контекст", 1, 1000000),
-            "gpu_layers": ("GPU слои", 1, 1000),
+            "gpu_layers": ("GPU слои", -1, 999),
             "threads": ("Потоки CPU", 1, 1024),
             "batch_size": ("Batch size", 1, 4096),
             "ubatch_size": ("UBatch size", 1, 4096),
@@ -312,8 +313,8 @@ class LlamaLauncherApp:
         if gpu_layers_val:
             try:
                 num = int(gpu_layers_val)
-                if num != -1 and num < 1:
-                    errors.append("GPU слои должно быть -1 или >= 1")
+                if num < -1 or num > 999:
+                    errors.append("GPU слои должно быть от -1 до 999")
             except ValueError:
                 errors.append("GPU слои должно быть числом")
         gen_fields = {
@@ -463,22 +464,39 @@ class LlamaLauncherApp:
         cmd = self._build_command()
         if cmd is None:
             return
+        # Очистка лога перед новым запуском
+        self.log_text.configure(state='normal')
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.configure(state='disabled')
+
         self.is_running = True
         self.start_btn.configure(text="⏳ Запуск...", state='disabled')
         self.stop_btn.configure(state='normal')
         self._log("Команда: " + " ".join(cmd))
         self._log("Запуск сервера...")
         try:
-            self.server_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
+            if sys.platform == "win32":
+                self.server_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            else:
+                self.server_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    encoding='utf-8',
+                    errors='replace',
+                    start_new_session=True
+                )
             monitor_thread = threading.Thread(target=self._monitor_process, daemon=True)
             monitor_thread.start()
             self._start_title_animation()
@@ -503,8 +521,12 @@ class LlamaLauncherApp:
         except Exception as e:
             self.root.after(0, self._log, f"Ошибка получения кода завершения: {e}")
             return
+        if not self.is_running:
+            return
         self.root.after(0, self._on_server_stopped)
     def _on_server_stopped(self):
+        if not self.is_running:
+            return
         self.is_running = False
         self.start_btn.configure(text="▶ Запустить", state='normal')
         self.stop_btn.configure(state='disabled')
@@ -536,16 +558,51 @@ class LlamaLauncherApp:
         if self.server_process and self.server_process.poll() is None:
             self._log("Остановка сервера...")
             self.server_process.terminate()
-            self._poll_stop()
+            self._poll_stop_with_timeout(5.0)
         else:
             self._log("Сервер не запущен.")
             self._on_server_stopped()
     def _poll_stop(self):
-        if self.server_process and self.server_process.poll() is None:
-            self.root.after(200, self._poll_stop)
-        else:
+        if not self.server_process or self.server_process.poll() is not None:
             if self.server_process:
                 self.server_process.wait()
+            self._log("Сервер остановлен.")
+            self._on_server_stopped()
+            return
+        self.root.after(200, self._poll_stop)
+
+    def _force_kill(self):
+        if self.server_process and self.server_process.poll() is None:
+            try:
+                if sys.platform == "win32":
+                    self.server_process.terminate()  # CTRL_BREAK_EVENT on Windows
+                else:
+                    import signal
+                    os.killpg(os.getpgid(self.server_process.pid), signal.SIGKILL)
+            except Exception as e:
+                self.root.after(0, self._log, f"Ошибка принудительной остановки: {e}")
+            try:
+                self.server_process.wait(timeout=3)
+            except Exception:
+                pass
+            self._log("Сервер принудительно остановлен.")
+            self._on_server_stopped()
+
+    def _poll_stop_with_timeout(self, timeout=5.0):
+        elapsed = 0
+        interval = 0.2
+        while elapsed < timeout:
+            if self.server_process and self.server_process.poll() is None:
+                self.root.after(int(interval * 1000), lambda: self._poll_stop_with_timeout(timeout - elapsed))
+                time.sleep(interval)
+                elapsed += interval
+            else:
+                break
+        if self.server_process and self.server_process.poll() is None:
+            self._force_kill()
+        elif not self.is_running:
+            pass
+        else:
             self._log("Сервер остановлен.")
             self._on_server_stopped()
     def _copy_selected(self, event=None):
@@ -641,32 +698,59 @@ class LlamaLauncherApp:
         self.model_var.set("")
         self.mmproj_path_var.set("")
         self.chat_template_path_var.set("")
-        for var in self.server_vars.values():
-            var.set("")
-        for enabled in self.server_enabled.values():
-            enabled.set(False)
-        for var in self.gen_vars.values():
-            var.set("")
-        for enabled in self.gen_enabled.values():
-            enabled.set(False)
-        self.cache_k_var.set("")
-        self.cache_v_var.set("")
-        self.cache_k_enabled.set(False)
-        self.cache_v_enabled.set(False)
-        self.moe_var.set("")
-        self.moe_enabled.set(False)
-        self.reasoning_var.set("")
-        self.reasoning_enabled.set(False)
-        self.flash_attn_var.set(False)
-        self.cont_batching_var.set(False)
-        self.jinja_var.set(False)
-        self.no_mmap_var.set(False)
-        self.kv_unified_var.set(False)
-        self.preserve_thinking_var.set(False)
-        self.repeat_penalty_var.set(False)
-        self.cache_prompt_var.set(False)
-        self.ctx_checkpoints_var.set(False)
-        self.swa_full_var.set(False)
+
+        defaults = {
+            "host": "0.0.0.0",
+            "port": "1414",
+            "context_size": "120000",
+            "gpu_layers": "999",
+            "threads": str(os.cpu_count() or 4),
+            "batch_size": "512",
+            "ubatch_size": "512",
+        }
+        for key, val in defaults.items():
+            if key in self.server_vars:
+                self.server_vars[key].set(val)
+        for key in self.server_enabled:
+            self.server_enabled[key].set(True)
+
+        gen_defaults = {
+            "temp": "0.6",
+            "top_k": "20",
+            "top_p": "0.95",
+            "parallel": "2",
+        }
+        for key, val in gen_defaults.items():
+            if key in self.gen_vars:
+                self.gen_vars[key].set(val)
+        for key in self.gen_enabled:
+            self.gen_enabled[key].set(True)
+
+        self.cache_k_var.set("q4_0")
+        self.cache_v_var.set("q4_0")
+        self.cache_k_enabled.set(True)
+        self.cache_v_enabled.set(True)
+        self.moe_var.set("0")
+        self.moe_enabled.set(True)
+        self.reasoning_var.set("0")
+        self.reasoning_enabled.set(True)
+
+        adv_defaults = {
+            "flash_attn": True,
+            "cont_batching": True,
+            "jinja": True,
+            "no_mmap": True,
+            "kv_unified": True,
+            "preserve_thinking": True,
+            "repeat_penalty": False,
+            "cache_prompt": False,
+            "ctx_checkpoints": False,
+            "swa_full": False,
+        }
+        for key, val in adv_defaults.items():
+            if key in self.adv_vars:
+                self.adv_vars[key].set(val)
+
         self.extra_args_var.set("")
         self._dirty = False
         messagebox.showinfo("Инфо", "Настройки сброшены к значениям по умолчанию")
@@ -681,6 +765,11 @@ class LlamaLauncherApp:
         except Exception:
             pass
     def _apply_config(self, config):
+        known_server_keys = set(self.server_vars.keys())
+        known_gen_keys = set(self.gen_vars.keys())
+        known_gen_enabled_keys = set(self.gen_enabled.keys())
+        known_server_enabled_keys = set(self.server_enabled.keys())
+
         if config.get("model"):
             self.model_var.set(config["model"])
         if config.get("server_path"):
@@ -689,18 +778,33 @@ class LlamaLauncherApp:
             self.mmproj_path_var.set(config["mmproj_path"])
         if config.get("chat_template_path"):
             self.chat_template_path_var.set(config["chat_template_path"])
+
+        unknown_server = []
         for k, v in config.get("server", {}).items():
-            if k in self.server_vars:
+            if k in known_server_keys:
                 self.server_vars[k].set(v)
+            else:
+                unknown_server.append(k)
+
         for k, v in config.get("server_enabled", {}).items():
-            if k in self.server_enabled:
+            if k in known_server_enabled_keys:
                 self.server_enabled[k].set(v)
+            elif k not in unknown_server:
+                unknown_server.append(k + "_enabled")
+
+        unknown_gen = []
         for k, v in config.get("generation", {}).items():
-            if k in self.gen_vars:
+            if k in known_gen_keys:
                 self.gen_vars[k].set(v)
+            else:
+                unknown_gen.append(k)
+
         for k, v in config.get("gen_enabled", {}).items():
-            if k in self.gen_enabled:
+            if k in known_gen_enabled_keys:
                 self.gen_enabled[k].set(v)
+            elif k not in unknown_gen:
+                unknown_gen.append(k + "_enabled")
+
         if config.get("cache_k"):
             self.cache_k_var.set(config["cache_k"])
         if config.get("cache_v"):
@@ -719,9 +823,20 @@ class LlamaLauncherApp:
             self.reasoning_enabled.set(config["reasoning_enabled"])
         if "extra_args" in config and config["extra_args"]:
             self.extra_args_var.set(config["extra_args"])
+
+        unknown_adv = []
         for k, v in config.get("advanced", {}).items():
             if k in self.adv_vars:
                 self.adv_vars[k].set(v)
+            else:
+                unknown_adv.append(k)
+
+        all_unknown = unknown_server + unknown_gen + unknown_adv
+        if all_unknown:
+            messagebox.showinfo(
+                "Инфо",
+                f"Конфиг загружен. Неизвестные поля пропущены:\n{', '.join(all_unknown)}\n\nОбновите лаунчер до последней версии для поддержки новых параметров."
+            )
     def _on_closing(self):
         if self.server_process and self.server_process.poll() is None:
             if not messagebox.askyesno("Предупреждение", "Сервер запущен. Закрыть приложение и остановить сервер?"):
