@@ -37,6 +37,7 @@ class LlamaLauncherApp:
         self._dirty = False
         self._animation_thread = None
         self._animation_running = False
+        self._animation_lock = threading.Lock()
         self._setup_styles()
         self._create_ui()
         self._auto_load_config()
@@ -309,14 +310,6 @@ class LlamaLauncherApp:
             ok, err = self._validate_numeric(label, val, min_v, max_v)
             if not ok:
                 errors.append(err)
-        gpu_layers_val = self.server_vars["gpu_layers"].get().strip()
-        if gpu_layers_val:
-            try:
-                num = int(gpu_layers_val)
-                if num < -1 or num > 999:
-                    errors.append("GPU слои должно быть от -1 до 999")
-            except ValueError:
-                errors.append("GPU слои должно быть числом")
         gen_fields = {
             "temp": ("Temperature", 0.01, 2.0, True),
             "top_k": ("Top-k", 1, 500, False),
@@ -533,12 +526,14 @@ class LlamaLauncherApp:
         self._stop_title_animation()
 
     def _start_title_animation(self):
-        self._animation_running = True
+        with self._animation_lock:
+            self._animation_running = True
         self._animation_thread = threading.Thread(target=self._title_animation_loop, daemon=True)
         self._animation_thread.start()
 
     def _stop_title_animation(self):
-        self._animation_running = False
+        with self._animation_lock:
+            self._animation_running = False
         if self._animation_thread is not None:
             self._animation_thread.join(timeout=1.0)
             self._animation_thread = None
@@ -546,13 +541,19 @@ class LlamaLauncherApp:
 
     def _title_animation_loop(self):
         count = 0
-        while self._animation_running:
+        while True:
+            with self._animation_lock:
+                running = self._animation_running
+            if not running:
+                break
             self.root.after(0, self._set_title_frame, count)
             count = (count + 1) % 4
             time.sleep(0.3)
 
     def _set_title_frame(self, count):
-        if self._animation_running:
+        with self._animation_lock:
+            running = self._animation_running
+        if running:
             self.root.title("llama GUI" + (" * " * count).rstrip())
     def _stop_server(self):
         if self.server_process and self.server_process.poll() is None:
@@ -573,6 +574,7 @@ class LlamaLauncherApp:
 
     def _force_kill(self):
         if self.server_process and self.server_process.poll() is None:
+            killed = False
             try:
                 if sys.platform == "win32":
                     self.server_process.terminate()  # CTRL_BREAK_EVENT on Windows
@@ -583,26 +585,37 @@ class LlamaLauncherApp:
                 self.root.after(0, self._log, f"Ошибка принудительной остановки: {e}")
             try:
                 self.server_process.wait(timeout=3)
+                killed = True
             except Exception:
                 pass
+            if not killed and self.server_process and self.server_process.poll() is None:
+                if sys.platform == "win32":
+                    try:
+                        self.server_process.kill()  # TerminateProcess on Windows
+                    except Exception as e:
+                        self.root.after(0, self._log, f"Ошибка kill(): {e}")
+                else:
+                    import signal
+                    try:
+                        os.kill(self.server_process.pid, signal.SIGKILL)
+                    except Exception as e:
+                        self.root.after(0, self._log, f"Ошибка kill(pid): {e}")
             self._log("Сервер принудительно остановлен.")
             self._on_server_stopped()
 
     def _poll_stop_with_timeout(self, timeout=5.0):
-        elapsed = 0
         interval = 0.2
-        while elapsed < timeout:
+        checks = int(timeout / interval)
+        for i in range(checks):
+            if not self.is_running:
+                break
             if self.server_process and self.server_process.poll() is None:
-                self.root.after(int(interval * 1000), lambda: self._poll_stop_with_timeout(timeout - elapsed))
                 time.sleep(interval)
-                elapsed += interval
             else:
                 break
-        if self.server_process and self.server_process.poll() is None:
+        if self.server_process and self.server_process.poll() is None and self.is_running:
             self._force_kill()
-        elif not self.is_running:
-            pass
-        else:
+        elif self.is_running:
             self._log("Сервер остановлен.")
             self._on_server_stopped()
     def _copy_selected(self, event=None):
