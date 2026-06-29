@@ -9,7 +9,7 @@ from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 import json
 import time
-_LAST_CONFIG_META = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_config_path")
+_LAST_CONFIG_META = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".config")
 def _get_last_config_path():
     try:
         with open(_LAST_CONFIG_META, 'r', encoding='utf-8') as f:
@@ -37,7 +37,7 @@ class LlamaLauncherApp:
         self._dirty = False
         self._animation_thread = None
         self._animation_running = False
-        self._animation_lock = threading.Lock()
+        self._poll_timeout_callback_id = None
         self._setup_styles()
         self._create_ui()
         self._auto_load_config()
@@ -306,7 +306,9 @@ class LlamaLauncherApp:
         for key, (label, min_v, max_v) in server_fields.items():
             if key == "gpu_layers" and not self.server_enabled.get("gpu_layers", True):
                 continue
-            val = self.server_vars.get(key, tk.StringVar()).get()
+            val = self.server_vars.get(key, tk.StringVar()).get().strip()
+            if not val:
+                continue
             ok, err = self._validate_numeric(label, val, min_v, max_v)
             if not ok:
                 errors.append(err)
@@ -510,30 +512,31 @@ class LlamaLauncherApp:
         except Exception:
             pass
         try:
-            exit_code = self.server_process.wait()
+            self.server_process.wait()
         except Exception as e:
             self.root.after(0, self._log, f"Ошибка получения кода завершения: {e}")
             return
         if not self.is_running:
             return
         self.root.after(0, self._on_server_stopped)
-    def _on_server_stopped(self):
+    def _on_server_stopped(self, logged=True):
         if not self.is_running:
             return
+        self._cancel_poll_callback()
         self.is_running = False
         self.start_btn.configure(text="▶ Запустить", state='normal')
         self.stop_btn.configure(state='disabled')
         self._stop_title_animation()
+        if logged:
+            self._log("Сервер остановлен.")
 
     def _start_title_animation(self):
-        with self._animation_lock:
-            self._animation_running = True
+        self._animation_running = True
         self._animation_thread = threading.Thread(target=self._title_animation_loop, daemon=True)
         self._animation_thread.start()
 
     def _stop_title_animation(self):
-        with self._animation_lock:
-            self._animation_running = False
+        self._animation_running = False
         if self._animation_thread is not None:
             self._animation_thread.join(timeout=1.0)
             self._animation_thread = None
@@ -541,19 +544,16 @@ class LlamaLauncherApp:
 
     def _title_animation_loop(self):
         count = 0
-        while True:
-            with self._animation_lock:
-                running = self._animation_running
-            if not running:
+        while self._animation_running:
+            try:
+                self.root.after(0, self._set_title_frame, count)
+            except Exception:
                 break
-            self.root.after(0, self._set_title_frame, count)
             count = (count + 1) % 4
             time.sleep(0.3)
 
     def _set_title_frame(self, count):
-        with self._animation_lock:
-            running = self._animation_running
-        if running:
+        if self._animation_running:
             self.root.title("llama GUI" + (" * " * count).rstrip())
     def _stop_server(self):
         if self.server_process and self.server_process.poll() is None:
@@ -562,19 +562,26 @@ class LlamaLauncherApp:
             self._poll_stop_with_timeout(5.0)
         else:
             self._log("Сервер не запущен.")
-            self._on_server_stopped()
+            self._on_server_stopped(logged=False)
+    def _cancel_poll_callback(self):
+        if self._poll_timeout_callback_id is not None:
+            self.root.after_cancel(self._poll_timeout_callback_id)
+            self._poll_timeout_callback_id = None
+
     def _poll_stop(self):
         if not self.server_process or self.server_process.poll() is not None:
             if self.server_process:
-                self.server_process.wait()
+                try:
+                    self.server_process.wait(timeout=2)
+                except Exception:
+                    pass
             self._log("Сервер остановлен.")
-            self._on_server_stopped()
+            self._on_server_stopped(logged=False)
             return
-        self.root.after(200, self._poll_stop)
+        self._poll_timeout_callback_id = self.root.after(200, self._poll_stop)
 
     def _force_kill(self):
         if self.server_process and self.server_process.poll() is None:
-            killed = False
             try:
                 if sys.platform == "win32":
                     self.server_process.terminate()  # CTRL_BREAK_EVENT on Windows
@@ -585,39 +592,25 @@ class LlamaLauncherApp:
                 self.root.after(0, self._log, f"Ошибка принудительной остановки: {e}")
             try:
                 self.server_process.wait(timeout=3)
-                killed = True
             except Exception:
                 pass
-            if not killed and self.server_process and self.server_process.poll() is None:
-                if sys.platform == "win32":
-                    try:
-                        self.server_process.kill()  # TerminateProcess on Windows
-                    except Exception as e:
-                        self.root.after(0, self._log, f"Ошибка kill(): {e}")
-                else:
-                    import signal
-                    try:
-                        os.kill(self.server_process.pid, signal.SIGKILL)
-                    except Exception as e:
-                        self.root.after(0, self._log, f"Ошибка kill(pid): {e}")
             self._log("Сервер принудительно остановлен.")
-            self._on_server_stopped()
+            self._on_server_stopped(logged=False)
 
-    def _poll_stop_with_timeout(self, timeout=5.0):
-        interval = 0.2
-        checks = int(timeout / interval)
-        for i in range(checks):
-            if not self.is_running:
-                break
+    def _poll_stop_with_timeout(self, remaining=5.0):
+        if remaining <= 0 or not self.is_running:
+            self._cancel_poll_callback()
             if self.server_process and self.server_process.poll() is None:
-                time.sleep(interval)
-            else:
-                break
-        if self.server_process and self.server_process.poll() is None and self.is_running:
-            self._force_kill()
-        elif self.is_running:
+                self._force_kill()
+            elif self.is_running:
+                self._on_server_stopped(logged=True)
+            return
+        if self.server_process and self.server_process.poll() is not None:
+            self._cancel_poll_callback()
             self._log("Сервер остановлен.")
-            self._on_server_stopped()
+            self._on_server_stopped(logged=False)
+            return
+        self._poll_timeout_callback_id = self.root.after(200, lambda r=remaining - 0.2: self._poll_stop_with_timeout(r))
     def _copy_selected(self, event=None):
         try:
             selected = self.log_text.get("sel.first", "sel.last")
@@ -701,6 +694,7 @@ class LlamaLauncherApp:
                 config = json.load(f)
             self._apply_config(config)
             _save_last_config_path(path)
+            self._dirty = False
             messagebox.showinfo("Инфо", f"Конфиг загружен: {path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка загрузки конфига: {e}")
@@ -775,6 +769,7 @@ class LlamaLauncherApp:
             with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             self._apply_config(config)
+            self._dirty = False
         except Exception:
             pass
     def _apply_config(self, config):
@@ -851,14 +846,20 @@ class LlamaLauncherApp:
                 f"Конфиг загружен. Неизвестные поля пропущены:\n{', '.join(all_unknown)}\n\nОбновите лаунчер до последней версии для поддержки новых параметров."
             )
     def _on_closing(self):
+        self._cancel_poll_callback()
         if self.server_process and self.server_process.poll() is None:
             if not messagebox.askyesno("Предупреждение", "Сервер запущен. Закрыть приложение и остановить сервер?"):
                 return
+            self._log("Остановка сервера...")
             self.server_process.terminate()
             try:
                 self.server_process.wait(timeout=5)
             except Exception:
-                pass
+                try:
+                    self.server_process.kill()
+                    self.server_process.wait(timeout=3)
+                except Exception:
+                    pass
         if self._dirty:
             result = messagebox.askokcancel(
                 "Сохранение",
@@ -871,6 +872,7 @@ class LlamaLauncherApp:
                 pass
             else:
                 return
+        self._stop_title_animation()
         self.root.destroy()
 def main():
     root = tk.Tk()
