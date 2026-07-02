@@ -38,6 +38,8 @@ class LlamaLauncherApp:
         self._animation_thread = None
         self._animation_running = False
         self._poll_timeout_callback_id = None
+        self._log_line_count = 0
+        self._log_file = None
         self._setup_styles()
         self._create_ui()
         self._auto_load_config()
@@ -260,7 +262,6 @@ class LlamaLauncherApp:
         self.log_text.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
         self.log_text.bind('<Control-c>', self._copy_selected)
-        self.log_text.bind('<Control-C>', self._copy_selected)
         self.log_text.bind('<Button-3>', self._log_context_menu)
     def _mark_dirty(self, *_args):
         if not self._dirty:
@@ -358,7 +359,7 @@ class LlamaLauncherApp:
     def _select_chat_template(self):
         path = filedialog.askopenfilename(
             title="Выберите файл chat template",
-            filetypes=[("Chat Template", "*.jinja"), ("Все файлы", "*.*")]
+            filetypes=[("Chat Template (*.jinja, *.json)", "*.jinja *.json"), ("Все файлы", "*.*")]
         )
         if path:
             self.chat_template_path_var.set(path)
@@ -432,6 +433,8 @@ class LlamaLauncherApp:
             cmd.extend(["--reasoning-budget", reasoning])
         if self.preserve_thinking_var.get():
             cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":true}'])
+        else:
+            cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":false}'])
         if self.repeat_penalty_var.get():
             cmd.extend(["--repeat-penalty", "1.1"])
         if self.cache_prompt_var.get():
@@ -467,6 +470,9 @@ class LlamaLauncherApp:
         self.is_running = True
         self.start_btn.configure(text="⏳ Запуск...", state='disabled')
         self.stop_btn.configure(state='normal')
+        if self._log_file and not self._log_file.closed:
+            self._log_file.close()
+            self._log_file = None
         self._log("Команда: " + " ".join(cmd))
         self._log("Запуск сервера...")
         try:
@@ -520,15 +526,17 @@ class LlamaLauncherApp:
             return
         self.root.after(0, self._on_server_stopped)
     def _on_server_stopped(self, logged=True):
+        # Double-check to prevent duplicate logs from race conditions
         if not self.is_running:
             return
         self._cancel_poll_callback()
+        still_running = self.is_running  # capture state before clearing
         self.is_running = False
+        if still_running and logged:
+            self._log("Сервер остановлен.")
         self.start_btn.configure(text="▶ Запустить", state='normal')
         self.stop_btn.configure(state='disabled')
         self._stop_title_animation()
-        if logged:
-            self._log("Сервер остановлен.")
 
     def _start_title_animation(self):
         self._animation_running = True
@@ -582,6 +590,7 @@ class LlamaLauncherApp:
 
     def _force_kill(self):
         if self.server_process and self.server_process.poll() is None:
+            was_running = True
             try:
                 if sys.platform == "win32":
                     self.server_process.terminate()  # CTRL_BREAK_EVENT on Windows
@@ -594,6 +603,9 @@ class LlamaLauncherApp:
                 self.server_process.wait(timeout=3)
             except Exception:
                 pass
+        else:
+            was_running = False
+        if was_running and self.is_running:
             self._log("Сервер принудительно остановлен.")
             self._on_server_stopped(logged=False)
 
@@ -635,6 +647,28 @@ class LlamaLauncherApp:
         finally:
             menu.grab_release()
     def _log(self, message):
+        try:
+            if self._log_file is None or self._log_file.closed:
+                log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log.txt")
+                try:
+                    self._log_file = open(log_path, 'w', encoding='utf-8')
+                except Exception:
+                    self._log_file = None
+            if self._log_file and not self._log_file.closed:
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                self._log_file.write(f"[{timestamp}] {message}\n")
+                self._log_file.flush()
+        except Exception:
+            pass
+        self._log_line_count += 1
+        if self._log_line_count > 5000:
+            self.log_text.configure(state='normal')
+            current_lines = int(float(self.log_text.index('end-1c').split('.')[0]))
+            if current_lines > 100:
+                remove_count = min(100, current_lines - 1)
+                self.log_text.delete(1.0, f"{remove_count}.0")
+                self._log_line_count -= remove_count
+            self.log_text.configure(state='disabled')
         self.log_text.configure(state='normal')
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
@@ -643,7 +677,6 @@ class LlamaLauncherApp:
     def _save_config(self):
         path = filedialog.asksaveasfilename(
             title="Сохранить конфиг",
-            initialfile="llama_launcher_config.json",
             initialdir=os.path.dirname(os.path.abspath(__file__)),
             defaultextension=".json",
             filetypes=[("JSON", "*.json")]
@@ -771,7 +804,7 @@ class LlamaLauncherApp:
             self._apply_config(config)
             self._dirty = False
         except Exception:
-            pass
+            self._log(f"Ошибка загрузки последнего конфига ({path}): неизвестная ошибка")
     def _apply_config(self, config):
         known_server_keys = set(self.server_vars.keys())
         known_gen_keys = set(self.gen_vars.keys())
@@ -873,6 +906,8 @@ class LlamaLauncherApp:
             else:
                 return
         self._stop_title_animation()
+        if self._log_file and not self._log_file.closed:
+            self._log_file.close()
         self.root.destroy()
 def main():
     root = tk.Tk()
@@ -880,3 +915,4 @@ def main():
     root.mainloop()
 if __name__ == "__main__":
     main()
+
