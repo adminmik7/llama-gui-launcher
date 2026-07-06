@@ -326,7 +326,7 @@ class LlamaLauncherApp:
                 errors.append(err)
         reasoning_val = self.reasoning_var.get().strip()
         if reasoning_val:
-            ok, err = self._validate_numeric("Reasoning", reasoning_val, 0, 100000)
+            ok, err = self._validate_numeric("Reasoning", reasoning_val, -1, 10000)
             if not ok:
                 errors.append(err)
         moe_val = self.moe_var.get().strip()
