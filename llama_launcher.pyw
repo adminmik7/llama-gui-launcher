@@ -247,8 +247,6 @@ class LlamaLauncherApp:
                     command=self._save_config).pack(side='left', padx=5, expand=True, fill='x')
         ttk.Button(frame, text="📂 Загрузить конфиг", style='Info.TButton',
                     command=self._load_config).pack(side='left', padx=5, expand=True, fill='x')
-        ttk.Button(frame, text="✕ Сбросить настройки", style='Info.TButton',
-                    command=self._reset_settings).pack(side='left', padx=5, expand=True, fill='x')
     def _create_log_panel(self, parent):
         frame = ttk.LabelFrame(parent, text="📝 Лог сервера", padding=10, style='Card.TFrame')
         frame.pack(fill='both', expand=True)
@@ -514,7 +512,10 @@ class LlamaLauncherApp:
                 line = self.server_process.stdout.readline()
                 if not line:
                     break
-                self.root.after(0, self._log, line.rstrip())
+                log_line = line.rstrip()
+                self.root.after(0, self._log, log_line)
+                if 'listening' in log_line.lower():
+                    self.root.after(0, self._on_server_listening)
         except Exception:
             pass
         try:
@@ -537,6 +538,10 @@ class LlamaLauncherApp:
         self.start_btn.configure(text="▶ Запустить", state='normal')
         self.stop_btn.configure(state='disabled')
         self._stop_title_animation()
+
+    def _on_server_listening(self):
+        if self.is_running:
+            self.start_btn.configure(text="✅ Запущен")
 
     def _start_title_animation(self):
         self._animation_running = True
@@ -731,69 +736,6 @@ class LlamaLauncherApp:
             messagebox.showinfo("Инфо", f"Конфиг загружен: {path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка загрузки конфига: {e}")
-    def _reset_settings(self):
-        if not messagebox.askyesno("Подтверждение", "Сбросить все настройки к значениям по умолчанию?"):
-            return
-        self.server_path_var.set("")
-        self.model_var.set("")
-        self.mmproj_path_var.set("")
-        self.chat_template_path_var.set("")
-
-        defaults = {
-            "host": "0.0.0.0",
-            "port": "1414",
-            "context_size": "120000",
-            "gpu_layers": "999",
-            "threads": str(os.cpu_count() or 4),
-            "batch_size": "512",
-            "ubatch_size": "512",
-        }
-        for key, val in defaults.items():
-            if key in self.server_vars:
-                self.server_vars[key].set(val)
-        for key in self.server_enabled:
-            self.server_enabled[key].set(True)
-
-        gen_defaults = {
-            "temp": "0.6",
-            "top_k": "20",
-            "top_p": "0.95",
-            "parallel": "2",
-        }
-        for key, val in gen_defaults.items():
-            if key in self.gen_vars:
-                self.gen_vars[key].set(val)
-        for key in self.gen_enabled:
-            self.gen_enabled[key].set(True)
-
-        self.cache_k_var.set("q4_0")
-        self.cache_v_var.set("q4_0")
-        self.cache_k_enabled.set(True)
-        self.cache_v_enabled.set(True)
-        self.moe_var.set("0")
-        self.moe_enabled.set(True)
-        self.reasoning_var.set("0")
-        self.reasoning_enabled.set(True)
-
-        adv_defaults = {
-            "flash_attn": True,
-            "cont_batching": True,
-            "jinja": True,
-            "no_mmap": True,
-            "kv_unified": True,
-            "preserve_thinking": True,
-            "repeat_penalty": False,
-            "cache_prompt": False,
-            "ctx_checkpoints": False,
-            "swa_full": False,
-        }
-        for key, val in adv_defaults.items():
-            if key in self.adv_vars:
-                self.adv_vars[key].set(val)
-
-        self.extra_args_var.set("")
-        self._dirty = False
-        messagebox.showinfo("Инфо", "Настройки сброшены к значениям по умолчанию")
     def _auto_load_config(self):
         path = _get_last_config_path()
         if not path:
@@ -802,7 +744,6 @@ class LlamaLauncherApp:
             with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             self._apply_config(config)
-            self._dirty = False
         except Exception:
             self._log(f"Ошибка загрузки последнего конфига ({path}): неизвестная ошибка")
     def _apply_config(self, config):
