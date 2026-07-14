@@ -294,6 +294,10 @@ class LlamaLauncherApp:
         return True, ""
     def _validate_all(self):
         errors = []
+        host = self.server_vars.get("host", tk.StringVar()).get().strip()
+        if not host:
+            errors.append("Укажите адрес хоста")
+
         server_fields = {
             "port": ("Порт", 1, 65535),
             "context_size": ("Контекст", 1, 1000000),
