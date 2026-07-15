@@ -383,6 +383,7 @@ class LlamaLauncherApp:
         server_enabled_map = self.server_enabled
         param_mapping = {
             "context_size": ["-c"],
+            "gpu_layers": ["--n-gpu-layers"],
             "threads": ["-t"],
             "batch_size": ["-b"],
             "ubatch_size": ["-ub"],
