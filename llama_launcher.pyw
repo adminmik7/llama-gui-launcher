@@ -1,16 +1,50 @@
+import json
+import logging
 import os
 import sys
+from datetime import datetime
 import socket
 import subprocess
 import shlex
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from datetime import datetime
-import json
-import time
-_LAST_CONFIG_META = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".config")
+
+from datetime import date, datetime
+import atexit
+
+_log_file_handler = None
+
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+_CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
+
+def _setup_logging():
+    global _log_file_handler
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    log_filename = f"log_{date.today().isoformat()}.txt"
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    _log_file_handler = logging.FileHandler(os.path.join(_LOG_DIR, log_filename), encoding='utf-8')
+    _log_file_handler.setFormatter(formatter)
+    _log_file_handler.setLevel(logging.INFO)
+    logger.addHandler(_log_file_handler)
+
+logger = logging.getLogger(__name__)
+_setup_logging()
+
+def _flush_log():
+    global _log_file_handler
+    if _log_file_handler:
+        _log_file_handler.flush()
+        _log_file_handler.close()
+
+atexit.register(_flush_log)
+_LAST_CONFIG_META = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", ".config")
 def _get_last_config_path():
+    os.makedirs(os.path.dirname(_LAST_CONFIG_META), exist_ok=True)
     try:
         with open(_LAST_CONFIG_META, 'r', encoding='utf-8') as f:
             path = f.read().strip()
@@ -20,6 +54,7 @@ def _get_last_config_path():
         pass
     return None
 def _save_last_config_path(path):
+    os.makedirs(os.path.dirname(_LAST_CONFIG_META), exist_ok=True)
     try:
         with open(_LAST_CONFIG_META, 'w', encoding='utf-8') as f:
             f.write(path)
@@ -39,11 +74,11 @@ class LlamaLauncherApp:
         self._animation_running = False
         self._poll_timeout_callback_id = None
         self._log_line_count = 0
-        self._log_file = None
         self._setup_styles()
         self._create_ui()
         self._auto_load_config()
         self._register_dirty_traces()
+        self._log("Приложение запущено")
         self._center_window()
     def _setup_styles(self):
         style = ttk.Style()
@@ -163,56 +198,49 @@ class LlamaLauncherApp:
             entry = ttk.Entry(mid_col, textvariable=var, width=9)
             entry.grid(row=row, column=1, sticky='w', padx=(6, 0))
             ttk.Checkbutton(mid_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
-        ttk.Label(mid_col, text="KV-cache K:").grid(row=4, column=0, sticky='w', pady=2)
-        self.cache_k_var = tk.StringVar(value="q4_0")
-        cache_k_combo = ttk.Combobox(mid_col, textvariable=self.cache_k_var,
-                                      values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
-                                      state='readonly', width=6)
-        cache_k_combo.grid(row=4, column=1, sticky='w', padx=(6, 0))
-        self.cache_k_enabled = tk.BooleanVar(value=True)
-        ttk.Checkbutton(mid_col, variable=self.cache_k_enabled).grid(row=4, column=2, sticky='e', padx=(4, 0))
-        ttk.Label(mid_col, text="KV-cache V:").grid(row=5, column=0, sticky='w', pady=2)
-        self.cache_v_var = tk.StringVar(value="q4_0")
-        cache_v_combo = ttk.Combobox(mid_col, textvariable=self.cache_v_var,
-                                      values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
-                                      state='readonly', width=6)
-        cache_v_combo.grid(row=5, column=1, sticky='w', padx=(6, 0))
-        self.cache_v_enabled = tk.BooleanVar(value=True)
-        ttk.Checkbutton(mid_col, variable=self.cache_v_enabled).grid(row=5, column=2, sticky='e', padx=(4, 0))
-        ttk.Label(mid_col, text="CPU MoE:").grid(row=7, column=0, sticky='w', pady=2)
-        self.moe_var = tk.StringVar(value="0")
-        ttk.Entry(mid_col, textvariable=self.moe_var, width=9).grid(row=7, column=1, sticky='w', padx=(6, 0))
-        self.moe_enabled = tk.BooleanVar(value=True)
-        ttk.Checkbutton(mid_col, variable=self.moe_enabled).grid(row=7, column=2, sticky='e', padx=(4, 0))
-        ttk.Label(mid_col, text="Reasoning:").grid(row=8, column=0, sticky='w', pady=2)
-        self.reasoning_var = tk.StringVar(value="0")
-        ttk.Entry(mid_col, textvariable=self.reasoning_var, width=9).grid(row=8, column=1, sticky='w', padx=(6, 0))
-        self.reasoning_enabled = tk.BooleanVar(value=True)
-        ttk.Checkbutton(mid_col, variable=self.reasoning_enabled).grid(row=8, column=2, sticky='e', padx=(4, 0))
+        cache_params = [
+            ("cache_k", "KV-cache K", "q4_0", 4),
+            ("cache_v", "KV-cache V", "q4_0", 5),
+        ]
+        self.cache_vars = {}
+        self.cache_enabled = {}
+        for key, label, default, row in cache_params:
+            ttk.Label(mid_col, text=label + ":").grid(row=row, column=0, sticky='w', pady=2)
+            var = tk.StringVar(value=default)
+            self.cache_vars[key] = var
+            combo = ttk.Combobox(mid_col, textvariable=var,
+                                  values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
+                                  state='readonly', width=6)
+            combo.grid(row=row, column=1, sticky='w', padx=(6, 0))
+            enabled = tk.BooleanVar(value=True)
+            self.cache_enabled[key] = enabled
+            ttk.Checkbutton(mid_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
+
+        moe_params = [
+            ("moe", "CPU MoE", "0", 7),
+            ("reasoning", "Reasoning", "0", 8),
+        ]
+        self.moe_vars = {}
+        self.moe_enabled = {}
+        for key, label, default, row in moe_params:
+            ttk.Label(mid_col, text=label + ":").grid(row=row, column=0, sticky='w', pady=2)
+            var = tk.StringVar(value=default)
+            self.moe_vars[key] = var
+            ttk.Entry(mid_col, textvariable=var, width=9).grid(row=row, column=1, sticky='w', padx=(6, 0))
+            enabled = tk.BooleanVar(value=True)
+            self.moe_enabled[key] = enabled
+            ttk.Checkbutton(mid_col, variable=enabled).grid(row=row, column=2, sticky='e', padx=(4, 0))
         right_col = ttk.LabelFrame(frame, text="🔧 Дополнительно", padding=10, style='Card.TFrame')
         right_col.pack(side='left', fill='both', expand=True, padx=(1, 0))
-        self.flash_attn_var = tk.BooleanVar(value=True)
-        self.cont_batching_var = tk.BooleanVar(value=True)
-        self.jinja_var = tk.BooleanVar(value=True)
-        self.no_mmap_var = tk.BooleanVar(value=True)
-        self.kv_unified_var = tk.BooleanVar(value=True)
-        self.preserve_thinking_var = tk.BooleanVar(value=True)
-        self.repeat_penalty_var = tk.BooleanVar(value=False)
-        self.cache_prompt_var = tk.BooleanVar(value=False)
-        self.ctx_checkpoints_var = tk.BooleanVar(value=False)
-        self.swa_full_var = tk.BooleanVar(value=False)
-        self.adv_vars = {
-            "flash_attn": self.flash_attn_var,
-            "cont_batching": self.cont_batching_var,
-            "jinja": self.jinja_var,
-            "no_mmap": self.no_mmap_var,
-            "kv_unified": self.kv_unified_var,
-            "preserve_thinking": self.preserve_thinking_var,
-            "repeat_penalty": self.repeat_penalty_var,
-            "cache_prompt": self.cache_prompt_var,
-            "ctx_checkpoints": self.ctx_checkpoints_var,
-            "swa_full": self.swa_full_var,
+        self.adv_vars = {}
+        adv_defaults = {
+            "flash_attn": True, "cont_batching": True, "jinja": True,
+            "no_mmap": True, "kv_unified": True, "preserve_thinking": True,
+            "repeat_penalty": False, "cache_prompt": False,
+            "ctx_checkpoints": False, "swa_full": False,
         }
+        for key, default in adv_defaults.items():
+            self.adv_vars[key] = tk.BooleanVar(value=default)
         labels = {
             "flash_attn": "Flash Attention",
             "cont_batching": "Continual Batching",
@@ -265,19 +293,19 @@ class LlamaLauncherApp:
         if not self._dirty:
             self._dirty = True
     def _register_dirty_traces(self):
-        for var in [self.server_path_var, self.model_var, self.mmproj_path_var, self.chat_template_path_var,
-                     self.cache_k_var, self.cache_v_var, self.moe_var, self.reasoning_var,
-                     self.extra_args_var]:
+        path_vars = [self.server_path_var, self.model_var, self.mmproj_path_var,
+                     self.chat_template_path_var, self.extra_args_var]
+        for var in path_vars:
             var.trace_add('write', self._mark_dirty)
         for var in list(self.server_vars.values()) + list(self.gen_vars.values()):
             var.trace_add('write', self._mark_dirty)
-        for var in (list(self.server_enabled.values()) + list(self.gen_enabled.values()) +
-                     [self.cache_k_enabled, self.cache_v_enabled, self.moe_enabled,
-                      self.reasoning_enabled] +
-                     [self.flash_attn_var, self.cont_batching_var, self.jinja_var,
-                      self.no_mmap_var, self.kv_unified_var, self.preserve_thinking_var,
-                      self.repeat_penalty_var, self.cache_prompt_var, self.ctx_checkpoints_var,
-                      self.swa_full_var]):
+        for var in list(self.server_enabled.values()) + list(self.gen_enabled.values()):
+            var.trace_add('write', self._mark_dirty)
+        for var in (list(self.cache_enabled.values()) + list(self.moe_enabled.values())):
+            var.trace_add('write', self._mark_dirty)
+        for var in [self.cache_vars["cache_k"], self.cache_vars["cache_v"], self.moe_vars["moe"], self.moe_vars["reasoning"]]:
+            var.trace_add('write', self._mark_dirty)
+        for var in self.adv_vars.values():
             var.trace_add('write', self._mark_dirty)
     def _validate_numeric(self, field_name, value, min_val=None, max_val=None, allow_float=False):
         try:
@@ -326,12 +354,12 @@ class LlamaLauncherApp:
             ok, err = self._validate_numeric(label, val, min_v, max_v, allow_float)
             if not ok:
                 errors.append(err)
-        reasoning_val = self.reasoning_var.get().strip()
+        reasoning_val = self.moe_vars["reasoning"].get().strip()
         if reasoning_val:
             ok, err = self._validate_numeric("Reasoning", reasoning_val, -1, 10000)
             if not ok:
                 errors.append(err)
-        moe_val = self.moe_var.get().strip()
+        moe_val = self.moe_vars["moe"].get().strip()
         if moe_val:
             ok, err = self._validate_numeric("MoE экспертов", moe_val, 0, 1000)
             if not ok:
@@ -415,36 +443,36 @@ class LlamaLauncherApp:
         chat_template_path = self.chat_template_path_var.get().strip()
         if chat_template_path and os.path.exists(chat_template_path):
             cmd.extend(["--chat-template-file", chat_template_path])
-        if self.cache_k_enabled.get():
-            cmd.extend(["--cache-type-k", self.cache_k_var.get()])
-        if self.cache_v_enabled.get():
-            cmd.extend(["--cache-type-v", self.cache_v_var.get()])
-        if self.flash_attn_var.get():
+        if self.cache_enabled.get("cache_k"):
+            cmd.extend(["--cache-type-k", self.cache_vars["cache_k"].get()])
+        if self.cache_enabled.get("cache_v"):
+            cmd.extend(["--cache-type-v", self.cache_vars["cache_v"].get()])
+        if self.adv_vars["flash_attn"].get():
             cmd.extend(["-fa", "on"])
-        if self.cont_batching_var.get():
+        if self.adv_vars["cont_batching"].get():
             cmd.append("--cont-batching")
-        if self.jinja_var.get():
+        if self.adv_vars["jinja"].get():
             cmd.append("--jinja")
-        if self.no_mmap_var.get():
+        if self.adv_vars["no_mmap"].get():
             cmd.append("--no-mmap")
-        if self.kv_unified_var.get():
+        if self.adv_vars["kv_unified"].get():
             cmd.append("--kv-unified")
-        if self.moe_enabled.get() and self.moe_var.get().strip():
-            cmd.extend(["--n-cpu-moe", self.moe_var.get().strip()])
-        reasoning = self.reasoning_var.get().strip()
-        if self.reasoning_enabled.get() and reasoning:
+        if self.moe_enabled.get("moe") and self.moe_vars["moe"].get().strip():
+            cmd.extend(["--n-cpu-moe", self.moe_vars["moe"].get().strip()])
+        reasoning = self.moe_vars["reasoning"].get().strip()
+        if self.moe_enabled.get("reasoning") and reasoning:
             cmd.extend(["--reasoning-budget", reasoning])
-        if self.preserve_thinking_var.get():
+        if self.adv_vars["preserve_thinking"].get():
             cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":true}'])
         else:
             cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":false}'])
-        if self.repeat_penalty_var.get():
+        if self.adv_vars["repeat_penalty"].get():
             cmd.extend(["--repeat-penalty", "1.1"])
-        if self.cache_prompt_var.get():
+        if self.adv_vars["cache_prompt"].get():
             cmd.append("--cache-prompt")
-        if self.ctx_checkpoints_var.get():
+        if self.adv_vars["ctx_checkpoints"].get():
             cmd.extend(["--ctx-checkpoints", "64"])
-        if self.swa_full_var.get():
+        if self.adv_vars["swa_full"].get():
             cmd.append("--swa-full")
         extra = self.extra_args_var.get().strip()
         if extra:
@@ -473,10 +501,7 @@ class LlamaLauncherApp:
         self.is_running = True
         self.start_btn.configure(text="⏳ Запуск...", state='disabled')
         self.stop_btn.configure(state='normal')
-        if self._log_file and not self._log_file.closed:
-            self._log_file.close()
-            self._log_file = None
-        self._log("Команда: " + " ".join(cmd))
+        self._log(f"Команда: {' '.join(cmd)}")
         self._log("Запуск сервера...")
         try:
             if sys.platform == "win32":
@@ -521,8 +546,8 @@ class LlamaLauncherApp:
                 self.root.after(0, self._log, log_line)
                 if 'listening' in log_line.lower():
                     self.root.after(0, self._on_server_listening)
-        except Exception:
-            pass
+        except Exception as e:
+            self.root.after(0, self._log, f"Ошибка мониторинга процесса: {e}")
         try:
             self.server_process.wait()
         except Exception as e:
@@ -550,25 +575,17 @@ class LlamaLauncherApp:
 
     def _start_title_animation(self):
         self._animation_running = True
-        self._animation_thread = threading.Thread(target=self._title_animation_loop, daemon=True)
-        self._animation_thread.start()
+        self._animate_title(0)
 
     def _stop_title_animation(self):
         self._animation_running = False
-        if self._animation_thread is not None:
-            self._animation_thread.join(timeout=1.0)
-            self._animation_thread = None
         self.root.title("llama GUI")
 
-    def _title_animation_loop(self):
-        count = 0
-        while self._animation_running:
-            try:
-                self.root.after(0, self._set_title_frame, count)
-            except Exception:
-                break
-            count = (count + 1) % 4
-            time.sleep(0.3)
+    def _animate_title(self, count):
+        if not self._animation_running:
+            return
+        self.root.title("llama GUI" + (" * " * count).rstrip())
+        self.root.after(300, lambda c=(count + 1) % 4: self._animate_title(c))
 
     def _set_title_frame(self, count):
         if self._animation_running:
@@ -602,13 +619,13 @@ class LlamaLauncherApp:
         if self.server_process and self.server_process.poll() is None:
             was_running = True
             try:
+                import signal
                 if sys.platform == "win32":
-                    self.server_process.terminate()  # CTRL_BREAK_EVENT on Windows
+                    os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
                 else:
-                    import signal
                     os.killpg(os.getpgid(self.server_process.pid), signal.SIGKILL)
             except Exception as e:
-                self.root.after(0, self._log, f"Ошибка принудительной остановки: {e}")
+                self._log(f"Ошибка принудительной остановки: {e}")
             try:
                 self.server_process.wait(timeout=3)
             except Exception:
@@ -657,33 +674,25 @@ class LlamaLauncherApp:
         finally:
             menu.grab_release()
     def _log(self, message):
+        logger.info(message)
+        if _log_file_handler:
+            _log_file_handler.flush()
         try:
-            if self._log_file is None or self._log_file.closed:
-                log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log.txt")
-                try:
-                    self._log_file = open(log_path, 'w', encoding='utf-8')
-                except Exception:
-                    self._log_file = None
-            if self._log_file and not self._log_file.closed:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self._log_file.write(f"[{timestamp}] {message}\n")
-                self._log_file.flush()
+            self._log_line_count += 1
+            if self._log_line_count > 5000:
+                self.log_text.configure(state='normal')
+                current_lines = int(float(self.log_text.index('end-1c').split('.')[0]))
+                if current_lines > 100:
+                    remove_count = min(100, current_lines - 1)
+                    self.log_text.delete(1.0, f"{remove_count}.0")
+                    self._log_line_count -= remove_count
+            self.log_text.configure(state='normal')
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+            self.log_text.see(tk.END)
+            self.log_text.configure(state='disabled')
         except Exception:
             pass
-        self._log_line_count += 1
-        if self._log_line_count > 5000:
-            self.log_text.configure(state='normal')
-            current_lines = int(float(self.log_text.index('end-1c').split('.')[0]))
-            if current_lines > 100:
-                remove_count = min(100, current_lines - 1)
-                self.log_text.delete(1.0, f"{remove_count}.0")
-                self._log_line_count -= remove_count
-            self.log_text.configure(state='disabled')
-        self.log_text.configure(state='normal')
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.log_text.see(tk.END)
-        self.log_text.configure(state='disabled')
     def _save_config(self):
         path = filedialog.asksaveasfilename(
             title="Сохранить конфиг",
@@ -708,14 +717,14 @@ class LlamaLauncherApp:
             "server_enabled": {k: v.get() for k, v in self.server_enabled.items()},
             "generation": {k: v.get() for k, v in self.gen_vars.items()},
             "gen_enabled": {k: v.get() for k, v in self.gen_enabled.items()},
-            "cache_k": self.cache_k_var.get(),
-            "cache_v": self.cache_v_var.get(),
-            "cache_k_enabled": self.cache_k_enabled.get(),
-            "cache_v_enabled": self.cache_v_enabled.get(),
-            "moe": self.moe_var.get(),
-            "moe_enabled": self.moe_enabled.get(),
-            "reasoning": self.reasoning_var.get(),
-            "reasoning_enabled": self.reasoning_enabled.get(),
+            "cache_k": self.cache_vars["cache_k"].get(),
+            "cache_v": self.cache_vars["cache_v"].get(),
+            "cache_k_enabled": self.cache_enabled["cache_k"].get(),
+            "cache_v_enabled": self.cache_enabled["cache_v"].get(),
+            "moe": self.moe_vars["moe"].get(),
+            "moe_enabled": self.moe_enabled["moe"].get(),
+            "reasoning": self.moe_vars["reasoning"].get(),
+            "reasoning_enabled": self.moe_enabled["reasoning"].get(),
             "advanced": {k: v.get() for k, v in self.adv_vars.items()},
             "extra_args": self.extra_args_var.get(),
         }
@@ -750,7 +759,10 @@ class LlamaLauncherApp:
                 config = json.load(f)
             self._apply_config(config)
         except Exception:
-            self._log(f"Ошибка загрузки последнего конфига ({path}): неизвестная ошибка")
+            try:
+                self._log(f"Ошибка загрузки последнего конфига: {path}")
+            except Exception:
+                pass
     def _apply_config(self, config):
         known_server_keys = set(self.server_vars.keys())
         known_gen_keys = set(self.gen_vars.keys())
@@ -792,22 +804,22 @@ class LlamaLauncherApp:
             elif k not in unknown_gen:
                 unknown_gen.append(k + "_enabled")
 
-        if config.get("cache_k"):
-            self.cache_k_var.set(config["cache_k"])
-        if config.get("cache_v"):
-            self.cache_v_var.set(config["cache_v"])
-        if config.get("cache_k_enabled"):
-            self.cache_k_enabled.set(config["cache_k_enabled"])
-        if config.get("cache_v_enabled"):
-            self.cache_v_enabled.set(config["cache_v_enabled"])
-        if config.get("moe"):
-            self.moe_var.set(config["moe"])
-        if config.get("moe_enabled"):
-            self.moe_enabled.set(config["moe_enabled"])
-        if config.get("reasoning"):
-            self.reasoning_var.set(config["reasoning"])
-        if config.get("reasoning_enabled"):
-            self.reasoning_enabled.set(config["reasoning_enabled"])
+        if "cache_k" in config:
+            self.cache_vars["cache_k"].set(config["cache_k"])
+        if "cache_v" in config:
+            self.cache_vars["cache_v"].set(config["cache_v"])
+        if "cache_k_enabled" in config:
+            self.cache_enabled["cache_k"].set(config["cache_k_enabled"])
+        if "cache_v_enabled" in config:
+            self.cache_enabled["cache_v"].set(config["cache_v_enabled"])
+        if "moe" in config:
+            self.moe_vars["moe"].set(config["moe"])
+        if "moe_enabled" in config:
+            self.moe_enabled["moe"].set(config["moe_enabled"])
+        if "reasoning" in config:
+            self.moe_vars["reasoning"].set(config["reasoning"])
+        if "reasoning_enabled" in config:
+            self.moe_enabled["reasoning"].set(config["reasoning_enabled"])
         if "extra_args" in config and config["extra_args"]:
             self.extra_args_var.set(config["extra_args"])
 
@@ -852,8 +864,6 @@ class LlamaLauncherApp:
             else:
                 return
         self._stop_title_animation()
-        if self._log_file and not self._log_file.closed:
-            self._log_file.close()
         self.root.destroy()
 def main():
     root = tk.Tk()
