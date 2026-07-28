@@ -2,21 +2,19 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 import socket
 import subprocess
 import shlex
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-
-from datetime import date, datetime
 import atexit
 
 _log_file_handler = None
 
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-_CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
+
 
 def _setup_logging():
     global _log_file_handler
@@ -70,14 +68,12 @@ class LlamaLauncherApp:
         self.server_process = None
         self.is_running = False
         self._dirty = False
-        self._animation_thread = None
         self._animation_running = False
         self._poll_timeout_callback_id = None
-        self._log_line_count = 0
         self._setup_styles()
         self._create_ui()
-        self._auto_load_config()
         self._register_dirty_traces()
+        self._auto_load_config()
         self._log("Приложение запущено")
         self._center_window()
     def _setup_styles(self):
@@ -443,9 +439,10 @@ class LlamaLauncherApp:
         chat_template_path = self.chat_template_path_var.get().strip()
         if chat_template_path and os.path.exists(chat_template_path):
             cmd.extend(["--chat-template-file", chat_template_path])
-        if self.cache_enabled.get("cache_k"):
+        # Кэш KV — передаём только если чекбокс отмечен
+        if self.cache_enabled.get("cache_k") and self.cache_enabled["cache_k"].get():
             cmd.extend(["--cache-type-k", self.cache_vars["cache_k"].get()])
-        if self.cache_enabled.get("cache_v"):
+        if self.cache_enabled.get("cache_v") and self.cache_enabled["cache_v"].get():
             cmd.extend(["--cache-type-v", self.cache_vars["cache_v"].get()])
         if self.adv_vars["flash_attn"].get():
             cmd.extend(["-fa", "on"])
@@ -457,10 +454,12 @@ class LlamaLauncherApp:
             cmd.append("--no-mmap")
         if self.adv_vars["kv_unified"].get():
             cmd.append("--kv-unified")
-        if self.moe_enabled.get("moe") and self.moe_vars["moe"].get().strip():
-            cmd.extend(["--n-cpu-moe", self.moe_vars["moe"].get().strip()])
+        # MoE и Reasoning — передаём в команду только если чекбокс отмечен
+        moe_val = self.moe_vars["moe"].get().strip()
+        if self.moe_enabled.get("moe") and self.moe_enabled["moe"].get():
+            cmd.extend(["--n-cpu-moe", moe_val])
         reasoning = self.moe_vars["reasoning"].get().strip()
-        if self.moe_enabled.get("reasoning") and reasoning:
+        if self.moe_enabled.get("reasoning") and self.moe_enabled["reasoning"].get():
             cmd.extend(["--reasoning-budget", reasoning])
         if self.adv_vars["preserve_thinking"].get():
             cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":true}'])
@@ -493,7 +492,6 @@ class LlamaLauncherApp:
         cmd = self._build_command()
         if cmd is None:
             return
-        # Очистка лога перед новым запуском
         self.log_text.configure(state='normal')
         self.log_text.delete(1.0, tk.END)
         self.log_text.configure(state='disabled')
@@ -557,11 +555,10 @@ class LlamaLauncherApp:
             return
         self.root.after(0, self._on_server_stopped)
     def _on_server_stopped(self, logged=True):
-        # Double-check to prevent duplicate logs from race conditions
         if not self.is_running:
             return
         self._cancel_poll_callback()
-        still_running = self.is_running  # capture state before clearing
+        still_running = self.is_running
         self.is_running = False
         if still_running and logged:
             self._log("Сервер остановлен.")
@@ -587,9 +584,6 @@ class LlamaLauncherApp:
         self.root.title("llama GUI" + (" * " * count).rstrip())
         self.root.after(300, lambda c=(count + 1) % 4: self._animate_title(c))
 
-    def _set_title_frame(self, count):
-        if self._animation_running:
-            self.root.title("llama GUI" + (" * " * count).rstrip())
     def _stop_server(self):
         if self.server_process and self.server_process.poll() is None:
             self._log("Остановка сервера...")
@@ -678,15 +672,12 @@ class LlamaLauncherApp:
         if _log_file_handler:
             _log_file_handler.flush()
         try:
-            self._log_line_count += 1
-            if self._log_line_count > 5000:
-                self.log_text.configure(state='normal')
-                current_lines = int(float(self.log_text.index('end-1c').split('.')[0]))
-                if current_lines > 100:
-                    remove_count = min(100, current_lines - 1)
-                    self.log_text.delete(1.0, f"{remove_count}.0")
-                    self._log_line_count -= remove_count
+            current_lines = int(float(self.log_text.index('end-1c').split('.')[0]))
+            if current_lines > 5000 and current_lines > 100:
+                remove_count = min(200, current_lines - 1)
             self.log_text.configure(state='normal')
+            if current_lines > 5000 and current_lines > 100:
+                self.log_text.delete(1.0, f"{remove_count}.0")
             timestamp = datetime.now().strftime("%H:%M:%S")
             self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
             self.log_text.see(tk.END)
@@ -758,6 +749,7 @@ class LlamaLauncherApp:
             with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             self._apply_config(config)
+            self._dirty = False
         except Exception:
             try:
                 self._log(f"Ошибка загрузки последнего конфига: {path}")
