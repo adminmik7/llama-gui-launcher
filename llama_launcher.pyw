@@ -439,7 +439,6 @@ class LlamaLauncherApp:
         chat_template_path = self.chat_template_path_var.get().strip()
         if chat_template_path and os.path.exists(chat_template_path):
             cmd.extend(["--chat-template-file", chat_template_path])
-        # Кэш KV — передаём только если чекбокс отмечен
         if self.cache_enabled.get("cache_k") and self.cache_enabled["cache_k"].get():
             cmd.extend(["--cache-type-k", self.cache_vars["cache_k"].get()])
         if self.cache_enabled.get("cache_v") and self.cache_enabled["cache_v"].get():
@@ -454,7 +453,6 @@ class LlamaLauncherApp:
             cmd.append("--no-mmap")
         if self.adv_vars["kv_unified"].get():
             cmd.append("--kv-unified")
-        # MoE и Reasoning — передаём в команду только если чекбокс отмечен
         moe_val = self.moe_vars["moe"].get().strip()
         if self.moe_enabled.get("moe") and self.moe_enabled["moe"].get():
             cmd.extend(["--n-cpu-moe", moe_val])
