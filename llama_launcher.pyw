@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import sys
 from datetime import date, datetime
@@ -10,6 +11,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import atexit
+import winreg
 
 _log_file_handler = None
 
@@ -40,22 +42,22 @@ def _flush_log():
         _log_file_handler.close()
 
 atexit.register(_flush_log)
-_LAST_CONFIG_META = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", ".config")
+_REGISTRY_KEY_PATH = r"Software\llama_launcher"
 def _get_last_config_path():
-    os.makedirs(os.path.dirname(_LAST_CONFIG_META), exist_ok=True)
     try:
-        with open(_LAST_CONFIG_META, 'r', encoding='utf-8') as f:
-            path = f.read().strip()
-        if path and os.path.exists(path):
-            return path
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_KEY_PATH, 0, winreg.KEY_READ) as key:
+            value, _ = winreg.QueryValueEx(key, "last_config")
+            if value and os.path.exists(value):
+                return value
+    except FileNotFoundError:
+        pass
     except Exception:
         pass
     return None
 def _save_last_config_path(path):
-    os.makedirs(os.path.dirname(_LAST_CONFIG_META), exist_ok=True)
     try:
-        with open(_LAST_CONFIG_META, 'w', encoding='utf-8') as f:
-            f.write(path)
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _REGISTRY_KEY_PATH, 0, winreg.KEY_WRITE) as key:
+            winreg.SetValueEx(key, "last_config", 0, winreg.REG_SZ, path)
     except Exception:
         pass
 class LlamaLauncherApp:
@@ -307,6 +309,8 @@ class LlamaLauncherApp:
         try:
             if allow_float:
                 num = float(value)
+                if math.isnan(num) or math.isinf(num):
+                    return False, f"{field_name} должно быть конечным числом"
             else:
                 num = int(value)
         except (ValueError, TypeError):
@@ -671,10 +675,10 @@ class LlamaLauncherApp:
             _log_file_handler.flush()
         try:
             current_lines = int(float(self.log_text.index('end-1c').split('.')[0]))
-            if current_lines > 5000 and current_lines > 100:
+            if current_lines > 5000:
                 remove_count = min(200, current_lines - 1)
             self.log_text.configure(state='normal')
-            if current_lines > 5000 and current_lines > 100:
+            if current_lines > 5000:
                 self.log_text.delete(1.0, f"{remove_count}.0")
             timestamp = datetime.now().strftime("%H:%M:%S")
             self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
