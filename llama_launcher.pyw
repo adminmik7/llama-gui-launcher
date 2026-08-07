@@ -454,7 +454,7 @@ class LlamaLauncherApp:
         if self.adv_vars["jinja"].get():
             cmd.append("--jinja")
         if self.adv_vars["no_mmap"].get():
-            cmd.append("--no-mmap")
+            cmd.extend(["--load-mode", "none"])
         if self.adv_vars["kv_unified"].get():
             cmd.append("--kv-unified")
         moe_val = self.moe_vars["moe"].get().strip()

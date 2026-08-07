@@ -5,6 +5,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 ## Изменения
 
 ### Недавние изменения
+- `--no-mmap` заменён на `--load-mode none` — более гибкий режим загрузки модели (принудительная загрузка в RAM)
 - Добавлен чекбокс `--swa-full`
 - Добавлен чекбокс `--ctx-checkpoints 64`
 - Добавлен чекбокс `--cache-prompt`
@@ -25,12 +26,14 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 - Настройка параметров сервера: хост, порт, контекст, GPU-слои, потоки, batch size
 - Настройка параметров генерации: temperature, top-k, top-p, parallel
 - KV-cache quantization (K/V): f16, bf16, f32, q8_0, q4_0, q4_1, iq4_nl, q5_0, q5_1
-- Дополнительные опции: Flash Attention, Continual Batching, Jinja, No MMAP, KV Unified, Preserve Thinking, Repeat Penalty, Cache Prompt, Ctx Checkpoints, SWA Full
+- Дополнительные опции: Flash Attention, Continual Batching, Jinja, Load Mode (--load-mode none), KV Unified, Preserve Thinking, Repeat Penalty, Cache Prompt, Ctx Checkpoints, SWA Full
 - MoE (Mixture of Experts) и reasoning budget
 - Валидация всех числовых полей с диапазонами
 - Сохранение и загрузка конфигураций в JSON
-- Автосохранение последнего пути к конфиге
-- Мониторинг логов сервера в реальном времени с копированием
+- Автосохранение последнего пути к конфигy через реестр Windows (HKCU\Software\llama_launcher)
+- Логирование в файлы (`logs/log_YYYY-MM-DD.txt`) + мониторинг в реальном времени
+- Контекстное меню лога (правый клик → копировать) и `Ctrl+C` для копирования
+- Анимируемый заголовок окна при работе сервера
 - Валидация параметров перед запуском
 - Безопасное закрытие: остановка сервера и предложение сохранить конфиг
 
@@ -77,7 +80,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 | Хост | автоопределение | любой IP | Адрес для прослушивания |
 | Порт | `1414` | 1–65535 | Порт HTTP API |
 | Контекст | `120000` | 1–1 000 000 | Размер контекстного окна (`-c`) |
-| GPU слои | `999` | -1 или ≥1 | Количество слоёв на GPU (`-ngl`), `-1` = все |
+| GPU слои | `999` | -1 или ≥1 | Количество слоёв на GPU (`-ngl`). `-1` — все слои на CPU, `0` — ни одного на GPU, `≥1` — конкретное число. Максимум зависит от VRAM.
 | Потоки CPU | авто (os.cpu_count) | 1–1024 | Количество потоков (`-t`) |
 | Batch size | `512` | 1–4096 | Размер батча (`-b`) |
 | UBatch size | `512` | 1–4096 | Размер убатча (`-ub`) |
@@ -104,7 +107,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 | Flash Attention | ✅ включена | `-fa on` — ускорение внимания |
 | Continual Batching | ✅ включена | `--cont-batching` — непрерывная обработка |
 | Jinja шаблон | ✅ включена | `--jinja` — использование Jinja для шаблонов |
-| No MMAP (Windows) | ✅ включена | `--no-mmap` — отключение mmap (рекомендуется на Windows) |
+| Load Mode (Windows) | ✅ включена | `--load-mode none` — принудительная загрузка в RAM, отключение mmap (рекомендуется на Windows при проблемах с памятью) |
 | KV Unified | ✅ включена | `--kv-unified` — объединённый KV-кэш |
 | Preserve Thinking | ✅ включена | Сохраняет `<thinking>`-блоки в ответе |
 | Repeat Penalty | ❌ выключен | `--repeat-penalty 1.1` — штраф за повторение токенов |
@@ -184,12 +187,22 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 - Выберите файл `.jinja` в поле «Файл chat template»
 - В проекте есть `qwen_template.jinja` — шаблон для Qwen3
 
-**Где сохраняется конфиг?**
-- При сохранении вы выбираете путь вручную
-- Последний путь к конфигу сохраняется в `.last_config_path` и загружается автоматически при старте
+**Как работает автосохранение конфига?**
+- При сохранении вы выбираете путь вручную (`*.json`)
+- Последний путь к конфигу сохраняется в реестре Windows (`HKCU\Software\llama_launcher\last_config`) и загружается автоматически при запуске
+- Логи сервера сохраняются в папке `logs/` с daily именами файлов (`log_YYYY-MM-DD.txt`)
+
+**Контекстное меню лога**
+- Правый клик по панели логов → «Копировать» (копирует выделенный текст)
+- `Ctrl+C` — копирование выделенного текста из лога
+
+**Анимация заголовка**
+- При работе сервера заголовок окна анимируется (`llama GUI *`, `llama GUI **` и т.д.) для визуального индикатора активности
 
 **Можно ли использовать на Linux/macOS?**
-- Интерфейс Tkinter работает кроссплатформенно, но `creationflags=subprocess.CREATE_NO_WINDOW` оптимизирован под Windows. На Linux/macOS уберите эту опцию в коде.
+- Интерфейс Tkinter работает кроссплатформенно, но `creationflags=subprocess.CREATE_NO_WINDOW` оптимизирован под Windows.
+- Автосохранение через реестр Windows (`HKCU\Software\llama_launcher`) работает только на Windows (на других ОС путь к последнему конфигy не сохраняется).
+- На Linux/macOS уберите `creationflags=subprocess.CREATE_NO_WINDOW` в методе `_start_server`.
 
 ## Структура проекта
 
@@ -198,9 +211,11 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 ├── llama_launcher.pyw          # Основной файл лаунчера (GUI)
 ├── llama_launcher — копия.pyw  # Резервная копия
 ├── qwen_template.jinja         # Chat-шаблон для Qwen3
-├── .last_config_path           # Автосохранение пути к последнему конфигy
+├── logs/                       # Логи сервера (log_YYYY-MM-DD.txt)
 └── __pycache__/                # Кэш скомпилированного Python
 ```
+
+> **Примечание:** Путь к последнему конфигy теперь сохраняется в реестре Windows (`HKCU\Software\llama_launcher`), а не в файле `.last_config_path`.
 
 ## Зависимости
 
