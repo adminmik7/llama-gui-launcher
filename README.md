@@ -205,8 +205,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 ```
 .
 ├── llama_launcher.pyw          # Основной файл лаунчера (GUI)
-├── logs/                       # Логи сервера (log_YYYY-MM-DD.txt)
-└── __pycache__/                # Кэш скомпилированного Python
+└── logs/                       # Логи сервера (log_YYYY-MM-DD.txt)
 ```
 
 ## Зависимости
