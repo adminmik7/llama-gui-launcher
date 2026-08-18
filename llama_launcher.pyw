@@ -212,7 +212,7 @@ class LlamaLauncherApp:
             var = tk.StringVar(value=default)
             self.cache_vars[key] = var
             combo = ttk.Combobox(mid_col, textvariable=var,
-                                  values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
+                                  values=["q2_0", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0"],
                                   state='readonly', width=6)
             combo.grid(row=row, column=1, sticky='w', padx=(6, 0))
             enabled = tk.BooleanVar(value=True)
@@ -270,6 +270,7 @@ class LlamaLauncherApp:
         # Перехватываем Ctrl+<буква> до того как ttk.Entry решит keysym.
         # На русской раскладке Ctrl+C → keysym "Я"; ловим по event.keycode (physical key).
         self._extra_args_entry_ref.bind("<KeyPress>", self._on_extra_key)
+        right_col.columnconfigure(0, weight=1)
 
     def _on_extra_key(self, event):
         """Перехватываем Ctrl+C / Ctrl+X / Ctrl+V в поле доп. аргументов."""
@@ -315,8 +316,9 @@ class LlamaLauncherApp:
                     pos = len(text)
                 self.extra_args_var.set(text[:pos] + paste_text + text[pos:])
             return "break"
+        # Нераспознанный Ctrl+<буква> — отдаём стандартному поведению поля
+        return None
 
-        right_col.columnconfigure(0, weight=1)
     def _create_buttons_frame(self, parent):
         frame = ttk.Frame(parent)
         frame.pack(fill='x', pady=(5, 0))
@@ -383,22 +385,21 @@ class LlamaLauncherApp:
         if not host:
             errors.append("Укажите адрес хоста")
 
-        # (label, min_v, max_v, required) — обязательные поля нельзя оставлять пустыми
+        # (label, min_v, max_v); включённые поля нельзя оставлять пустыми
         server_fields = {
-            "port": ("Порт", 1, 65535, True),
-            "context_size": ("Контекст", 1, 1000000, False),
-            "gpu_layers": ("GPU слои", -1, 999, False),
-            "threads": ("Потоки CPU", 1, 1024, False),
-            "batch_size": ("Batch size", 1, 4096, False),
-            "ubatch_size": ("UBatch size", 1, 4096, False),
+            "port": ("Порт", 1, 65535),
+            "context_size": ("Контекст", 1, 1000000),
+            "gpu_layers": ("GPU слои", -1, 999),
+            "threads": ("Потоки CPU", 1, 1024),
+            "batch_size": ("Batch size", 1, 4096),
+            "ubatch_size": ("UBatch size", 1, 4096),
         }
-        for key, (label, min_v, max_v, required) in server_fields.items():
-            if key == "gpu_layers" and not self.server_enabled.get("gpu_layers", True):
+        for key, (label, min_v, max_v) in server_fields.items():
+            if key in self.server_enabled and not self.server_enabled[key].get():
                 continue
-            val = self.server_vars.get(key, tk.StringVar()).get().strip()
+            val = self.server_vars[key].get().strip()
             if not val:
-                if required:
-                    errors.append(f"{label} не может быть пустым")
+                errors.append(f"{label} не может быть пустым")
                 continue
             ok, err = self._validate_numeric(label, val, min_v, max_v)
             if not ok:
@@ -482,11 +483,11 @@ class LlamaLauncherApp:
             "ubatch_size": ["-ub"],
         }
         for key, flags in param_mapping.items():
-            if key not in server_enabled_map:
+            if key not in server_enabled_map or not server_enabled_map[key].get():
                 continue
-            enabled_bool = server_enabled_map[key]
-            if enabled_bool.get():
-                cmd.extend(flags + [self.server_vars[key].get()])
+            val = self.server_vars[key].get().strip()
+            if val:
+                cmd.extend(flags + [val])
         gen_enabled_map = self.gen_enabled
         gen_param_mapping = {
             "temp": ["--temp"],
@@ -668,10 +669,11 @@ class LlamaLauncherApp:
         if self.server_process and self.server_process.poll() is None:
             was_running = True
             try:
-                import signal
                 if sys.platform == "win32":
-                    os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
+                    # os.killpg в win32 нет — достаточно terminate самого процесса
+                    self.server_process.kill()
                 else:
+                    import signal
                     os.killpg(os.getpgid(self.server_process.pid), signal.SIGKILL)
             except Exception as e:
                 self._log(f"Ошибка принудительной остановки: {e}")
