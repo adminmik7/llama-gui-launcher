@@ -9,6 +9,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 - Добавлен чекбокс `--swa-full`
 - Добавлен чекбокс `--ctx-checkpoints 64`
 - Добавлен чекбокс `--cache-prompt`
+- Добавлены чекбоксы **Draft MTP** (`--spec-type draft-mtp`) и **Draft N-Max** (`--spec-draft-n-max 2`)
 - Repeat Penalty вынесен в отдельный чекбокс (по умолчанию выключен)
 - Уменьшен размер шрифта лога (11 → 10)
 - Исправлено пересечение элементов UI в блоке «Дополнительно»
@@ -24,7 +25,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 - Кастомные chat-шаблоны (`.jinja`)
 - Настройка параметров сервера: хост, порт, контекст, GPU-слои, потоки, batch size
 - Настройка параметров генерации: temperature, top-k, top-p, parallel
-- KV-cache quantization (K/V): f16, bf16, f32, q8_0, q4_0, q4_1, iq4_nl, q5_0, q5_1
+- KV-cache quantization (K/V): q2_0, q4_0, q4_1, q5_0, q5_1, q8_0
 - Дополнительные опции: Flash Attention, Continual Batching, Jinja, Load Mode (--load-mode none), KV Unified, Preserve Thinking, Repeat Penalty, Cache Prompt, Ctx Checkpoints, SWA Full
 - MoE (Mixture of Experts) и reasoning budget
 - Валидация всех числовых полей с диапазонами
@@ -78,7 +79,7 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 | Хост | автоопределение | любой IP | Адрес для прослушивания |
 | Порт | `1414` | 1–65535 | Порт HTTP API |
 | Контекст | `120000` | 1–1 000 000 | Размер контекстного окна (`-c`) |
-| GPU слои | `999` | -1 или ≥1 | Количество слоёв на GPU (`-ngl`). `-1` — все слои на CPU, `0` — ни одного на GPU, `≥1` — конкретное число. Максимум зависит от VRAM.
+| GPU слои | `999` | -1 или ≥1 | Количество слоёв на GPU (`--n-gpu-layers`). `-1` — все слои на CPU, `0` — ни одного на GPU, `≥1` — конкретное число. Максимум зависит от VRAM.
 | Потоки CPU | авто (os.cpu_count) | 1–1024 | Количество потоков (`-t`) |
 | Batch size | `512` | 1–4096 | Размер батча (`-b`) |
 | UBatch size | `512` | 1–4096 | Размер убатча (`-ub`) |
@@ -93,10 +94,10 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 | Top-k | `20` | 1–500 | K лучших токенов (`--top-k`) |
 | Top-p | `0.95` | 0.0–1.0 | Nucleus sampling (`--top-p`) |
 | Parallel | `2` | 1–32 | Параллельные запросы (`--parallel`) |
-| KV-cache K | `q4_0` | f16/bf16/f32/q8_0/q4_0/q4_1/iq4_nl/q5_0/q5_1 | Квантование KV-кэша K |
-| KV-cache V | `q4_0` | f16/bf16/f32/q8_0/q4_0/q4_1/iq4_nl/q5_0/q5_1 | Квантование KV-кэша V |
+| KV-cache K | `q4_0` | q2_0 / q4_0 / q4_1 / q5_0 / q5_1 / q8_0 | Квантование KV-кэша K (`--cache-type-k`) |
+| KV-cache V | `q4_0` | q2_0 / q4_0 / q4_1 / q5_0 / q5_1 / q8_0 | Квантование KV-кэша V (`--cache-type-v`) |
 | CPU MoE | `0` | 0–1000 | Число экспертов на CPU (`--n-cpu-moe`) |
-| Reasoning | `0` | 0–100000 | Reasoning budget (`--reasoning-budget`) |
+| Reasoning | `0` | -1–10000 | Reasoning budget (`--reasoning-budget`). `-1` — отключён.
 
 ### Шаг 4: Дополнительные опции
 
@@ -105,13 +106,15 @@ GUI-лаунчер для запуска `llama-server` из [llama.cpp](https:/
 | Flash Attention | ✅ включена | `-fa on` — ускорение внимания |
 | Continual Batching | ✅ включена | `--cont-batching` — непрерывная обработка |
 | Jinja шаблон | ✅ включена | `--jinja` — использование Jinja для шаблонов |
-| Load Mode (Windows) | ✅ включена | `--load-mode none` — принудительная загрузка в RAM, отключение mmap (рекомендуется на Windows при проблемах с памятью) |
+| Load Mode (Windows) | ✅ включена | `--load-mode none` — принудительная загрузка модели в RAM, отключение mmap (рекомендуется на Windows при проблемах с памятью) |
 | KV Unified | ✅ включена | `--kv-unified` — объединённый KV-кэш |
 | Preserve Thinking | ✅ включена | Сохраняет `<thinking>`-блоки в ответе |
 | Repeat Penalty | ❌ выключен | `--repeat-penalty 1.1` — штраф за повторение токенов |
 | Cache Prompt | ❌ выключен | `--cache-prompt` — кеширование промпта |
 | Ctx Checkpoints | ❌ выключен | `--ctx-checkpoints 64` — контрольные точки контекста |
 | SWA Full | ❌ выключен | `--swa-full` — full Sparse Weight Adapters |
+| Draft MTP | ❌ выключен | `--spec-type draft-mtp` — тип специн-декодера (MTP) |
+| Draft N-Max | ❌ выключен | `--spec-draft-n-max 2` — максимальное число draft токенов |
 
 ### Шаг 5: Запуск
 
