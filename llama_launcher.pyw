@@ -11,7 +11,6 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import atexit
-import winreg
 
 _log_file_handler = None
 
@@ -36,7 +35,6 @@ logger = logging.getLogger(__name__)
 _setup_logging()
 
 def _flush_log():
-    global _log_file_handler
     if _log_file_handler:
         _log_file_handler.flush()
         _log_file_handler.close()
@@ -44,7 +42,10 @@ def _flush_log():
 atexit.register(_flush_log)
 _REGISTRY_KEY_PATH = r"Software\llama_launcher"
 def _get_last_config_path():
+    if sys.platform != "win32":
+        return None
     try:
+        import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_KEY_PATH, 0, winreg.KEY_READ) as key:
             value, _ = winreg.QueryValueEx(key, "last_config")
             if value and os.path.exists(value):
@@ -55,7 +56,10 @@ def _get_last_config_path():
         pass
     return None
 def _save_last_config_path(path):
+    if sys.platform != "win32":
+        return
     try:
+        import winreg
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _REGISTRY_KEY_PATH, 0, winreg.KEY_WRITE) as key:
             winreg.SetValueEx(key, "last_config", 0, winreg.REG_SZ, path)
     except Exception:
@@ -207,7 +211,7 @@ class LlamaLauncherApp:
             var = tk.StringVar(value=default)
             self.cache_vars[key] = var
             combo = ttk.Combobox(mid_col, textvariable=var,
-                                  values=["f16", "bf16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"],
+                                  values=["q2_0", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0"],
                                   state='readonly', width=6)
             combo.grid(row=row, column=1, sticky='w', padx=(6, 0))
             enabled = tk.BooleanVar(value=True)
@@ -236,6 +240,7 @@ class LlamaLauncherApp:
             "no_mmap": True, "kv_unified": True, "preserve_thinking": True,
             "repeat_penalty": False, "cache_prompt": False,
             "ctx_checkpoints": False, "swa_full": False,
+            "draft_mtp": False, "draft_n_max": False,
         }
         for key, default in adv_defaults.items():
             self.adv_vars[key] = tk.BooleanVar(value=default)
@@ -250,12 +255,14 @@ class LlamaLauncherApp:
             "cache_prompt": "Cache Prompt",
             "ctx_checkpoints": "Ctx Checkpoints",
             "swa_full": "SWA Full",
+            "draft_mtp": "Draft MTP",
+            "draft_n_max": "Draft N-Max",
         }
         for idx, (key, var) in enumerate(self.adv_vars.items()):
             r = idx // 2
             c = idx % 2
             ttk.Checkbutton(right_col, text=labels[key], variable=var).grid(row=r, column=c, sticky='w', padx=(0, 10), pady=2)
-        row = 5
+        row = 6
         ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
         self.extra_args_var = tk.StringVar(value="")
         # Храним ссылку на виджет — нужны биндинги для буфера обмена
@@ -265,6 +272,7 @@ class LlamaLauncherApp:
         # Перехватываем Ctrl+<буква> до того как ttk.Entry решит keysym.
         # На русской раскладке Ctrl+C → keysym "Я"; ловим по event.keycode (physical key).
         self._extra_args_entry_ref.bind("<KeyPress>", self._on_extra_key)
+        right_col.columnconfigure(0, weight=1)
 
     def _on_extra_key(self, event):
         """Перехватываем Ctrl+C / Ctrl+X / Ctrl+V в поле доп. аргументов."""
@@ -310,8 +318,9 @@ class LlamaLauncherApp:
                     pos = len(text)
                 self.extra_args_var.set(text[:pos] + paste_text + text[pos:])
             return "break"
+        # Нераспознанный Ctrl+<буква> — отдаём стандартному поведению поля
+        return None
 
-        right_col.columnconfigure(0, weight=1)
     def _create_buttons_frame(self, parent):
         frame = ttk.Frame(parent)
         frame.pack(fill='x', pady=(5, 0))
@@ -378,6 +387,7 @@ class LlamaLauncherApp:
         if not host:
             errors.append("Укажите адрес хоста")
 
+        # (label, min_v, max_v); включённые поля нельзя оставлять пустыми
         server_fields = {
             "port": ("Порт", 1, 65535),
             "context_size": ("Контекст", 1, 1000000),
@@ -387,10 +397,11 @@ class LlamaLauncherApp:
             "ubatch_size": ("UBatch size", 1, 4096),
         }
         for key, (label, min_v, max_v) in server_fields.items():
-            if key == "gpu_layers" and not self.server_enabled.get("gpu_layers", True):
+            if key in self.server_enabled and not self.server_enabled[key].get():
                 continue
-            val = self.server_vars.get(key, tk.StringVar()).get().strip()
+            val = self.server_vars[key].get().strip()
             if not val:
+                errors.append(f"{label} не может быть пустым")
                 continue
             ok, err = self._validate_numeric(label, val, min_v, max_v)
             if not ok:
@@ -454,12 +465,17 @@ class LlamaLauncherApp:
         if not model_path or not os.path.exists(model_path):
             messagebox.showerror("Ошибка", "Укажите путь к GGUF модели")
             return None
+        host = self.server_vars["host"].get().strip() or "127.0.0.1"
+        port = self.server_vars["port"].get().strip()
+        if not port:
+            messagebox.showerror("Ошибка", "Укажите порт сервера")
+            return None
         cmd = [
             server_path,
             "-m", model_path,
         ]
-        cmd.extend(["--host", self.server_vars["host"].get()])
-        cmd.extend(["--port", self.server_vars["port"].get()])
+        cmd.extend(["--host", host])
+        cmd.extend(["--port", port])
         server_enabled_map = self.server_enabled
         param_mapping = {
             "context_size": ["-c"],
@@ -469,11 +485,11 @@ class LlamaLauncherApp:
             "ubatch_size": ["-ub"],
         }
         for key, flags in param_mapping.items():
-            if key not in server_enabled_map:
+            if key not in server_enabled_map or not server_enabled_map[key].get():
                 continue
-            enabled_bool = server_enabled_map[key]
-            if enabled_bool.get():
-                cmd.extend(flags + [self.server_vars[key].get()])
+            val = self.server_vars[key].get().strip()
+            if val:
+                cmd.extend(flags + [val])
         gen_enabled_map = self.gen_enabled
         gen_param_mapping = {
             "temp": ["--temp"],
@@ -527,6 +543,10 @@ class LlamaLauncherApp:
             cmd.extend(["--ctx-checkpoints", "64"])
         if self.adv_vars["swa_full"].get():
             cmd.append("--swa-full")
+        if self.adv_vars["draft_mtp"].get():
+            cmd.extend(["--spec-type", "draft-mtp"])
+        if self.adv_vars["draft_n_max"].get():
+            cmd.extend(["--spec-draft-n-max", "2"])
         extra = self.extra_args_var.get().strip()
         if extra:
             try:
@@ -651,26 +671,15 @@ class LlamaLauncherApp:
             self.root.after_cancel(self._poll_timeout_callback_id)
             self._poll_timeout_callback_id = None
 
-    def _poll_stop(self):
-        if not self.server_process or self.server_process.poll() is not None:
-            if self.server_process:
-                try:
-                    self.server_process.wait(timeout=2)
-                except Exception:
-                    pass
-            self._log("Сервер остановлен.")
-            self._on_server_stopped(logged=False)
-            return
-        self._poll_timeout_callback_id = self.root.after(200, self._poll_stop)
-
     def _force_kill(self):
         if self.server_process and self.server_process.poll() is None:
             was_running = True
             try:
-                import signal
                 if sys.platform == "win32":
-                    os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
+                    # os.killpg в win32 нет — достаточно terminate самого процесса
+                    self.server_process.kill()
                 else:
+                    import signal
                     os.killpg(os.getpgid(self.server_process.pid), signal.SIGKILL)
             except Exception as e:
                 self._log(f"Ошибка принудительной остановки: {e}")
@@ -905,10 +914,6 @@ class LlamaLauncherApp:
             )
             if result is True:
                 self._save_config()
-            elif result is False:
-                pass
-            else:
-                return
         self._stop_title_animation()
         self.root.destroy()
 def main():
