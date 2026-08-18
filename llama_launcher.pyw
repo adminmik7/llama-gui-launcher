@@ -258,7 +258,59 @@ class LlamaLauncherApp:
         row = 5
         ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
         self.extra_args_var = tk.StringVar(value="")
-        ttk.Entry(right_col, textvariable=self.extra_args_var, width=18).grid(row=row + 1, column=0, columnspan=2, sticky='ew', pady=(0, 5))
+        # Храним ссылку на виджет — нужны биндинги для буфера обмена
+        self._extra_args_entry_ref = ttk.Entry(right_col, textvariable=self.extra_args_var, width=18)
+        self._extra_args_entry_ref.grid(row=row + 1, column=0, columnspan=2, sticky='ew', pady=(0, 5))
+
+        # Перехватываем Ctrl+<буква> до того как ttk.Entry решит keysym.
+        # На русской раскладке Ctrl+C → keysym "Я"; ловим по event.keycode (physical key).
+        self._extra_args_entry_ref.bind("<KeyPress>", self._on_extra_key)
+
+    def _on_extra_key(self, event):
+        """Перехватываем Ctrl+C / Ctrl+X / Ctrl+V в поле доп. аргументов."""
+        if not (event.state & 0x4):
+            return "continue"
+        # physical key codes (не зависят от раскладки)
+        kc = event.keycode
+        try:
+            sel_start = self._extra_args_entry_ref.index("sel.first")
+            sel_end = self._extra_args_entry_ref.index("sel.last")
+            has_sel = True
+        except tk.TclError:
+            has_sel = False
+
+        text = self.extra_args_var.get()
+
+        # Ctrl+C — copy (keycode 67)
+        if kc == 67 and has_sel:
+            sel_text = text[sel_start:sel_end]
+            self.root.clipboard_clear()
+            self.root.clipboard_append(sel_text)
+            return "break"
+        # Ctrl+X — cut (keycode 88)
+        if kc == 88:
+            if has_sel:
+                sel_text = text[sel_start:sel_end]
+                self.root.clipboard_clear()
+                self.root.clipboard_append(sel_text)
+                self.extra_args_var.set(text[:sel_start] + text[sel_end:])
+            return "break"
+        # Ctrl+V — paste (keycode 86)
+        if kc == 86:
+            try:
+                paste_text = self.root.clipboard_get()
+            except tk.TclError:
+                return "break"
+            if has_sel:
+                self.extra_args_var.set(text[:sel_start] + paste_text + text[sel_end:])
+            else:
+                try:
+                    pos = int(self._extra_args_entry_ref.index("insert"))
+                except tk.TclError:
+                    pos = len(text)
+                self.extra_args_var.set(text[:pos] + paste_text + text[pos:])
+            return "break"
+
         right_col.columnconfigure(0, weight=1)
     def _create_buttons_frame(self, parent):
         frame = ttk.Frame(parent)
