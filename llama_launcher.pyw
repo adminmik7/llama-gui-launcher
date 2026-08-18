@@ -11,7 +11,6 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import atexit
-import winreg
 
 _log_file_handler = None
 
@@ -44,7 +43,10 @@ def _flush_log():
 atexit.register(_flush_log)
 _REGISTRY_KEY_PATH = r"Software\llama_launcher"
 def _get_last_config_path():
+    if sys.platform != "win32":
+        return None
     try:
+        import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_KEY_PATH, 0, winreg.KEY_READ) as key:
             value, _ = winreg.QueryValueEx(key, "last_config")
             if value and os.path.exists(value):
@@ -55,7 +57,10 @@ def _get_last_config_path():
         pass
     return None
 def _save_last_config_path(path):
+    if sys.platform != "win32":
+        return
     try:
+        import winreg
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _REGISTRY_KEY_PATH, 0, winreg.KEY_WRITE) as key:
             winreg.SetValueEx(key, "last_config", 0, winreg.REG_SZ, path)
     except Exception:
@@ -378,19 +383,22 @@ class LlamaLauncherApp:
         if not host:
             errors.append("Укажите адрес хоста")
 
+        # (label, min_v, max_v, required) — обязательные поля нельзя оставлять пустыми
         server_fields = {
-            "port": ("Порт", 1, 65535),
-            "context_size": ("Контекст", 1, 1000000),
-            "gpu_layers": ("GPU слои", -1, 999),
-            "threads": ("Потоки CPU", 1, 1024),
-            "batch_size": ("Batch size", 1, 4096),
-            "ubatch_size": ("UBatch size", 1, 4096),
+            "port": ("Порт", 1, 65535, True),
+            "context_size": ("Контекст", 1, 1000000, False),
+            "gpu_layers": ("GPU слои", -1, 999, False),
+            "threads": ("Потоки CPU", 1, 1024, False),
+            "batch_size": ("Batch size", 1, 4096, False),
+            "ubatch_size": ("UBatch size", 1, 4096, False),
         }
-        for key, (label, min_v, max_v) in server_fields.items():
+        for key, (label, min_v, max_v, required) in server_fields.items():
             if key == "gpu_layers" and not self.server_enabled.get("gpu_layers", True):
                 continue
             val = self.server_vars.get(key, tk.StringVar()).get().strip()
             if not val:
+                if required:
+                    errors.append(f"{label} не может быть пустым")
                 continue
             ok, err = self._validate_numeric(label, val, min_v, max_v)
             if not ok:
@@ -454,12 +462,17 @@ class LlamaLauncherApp:
         if not model_path or not os.path.exists(model_path):
             messagebox.showerror("Ошибка", "Укажите путь к GGUF модели")
             return None
+        host = self.server_vars["host"].get().strip() or "127.0.0.1"
+        port = self.server_vars["port"].get().strip()
+        if not port:
+            messagebox.showerror("Ошибка", "Укажите порт сервера")
+            return None
         cmd = [
             server_path,
             "-m", model_path,
         ]
-        cmd.extend(["--host", self.server_vars["host"].get()])
-        cmd.extend(["--port", self.server_vars["port"].get()])
+        cmd.extend(["--host", host])
+        cmd.extend(["--port", port])
         server_enabled_map = self.server_enabled
         param_mapping = {
             "context_size": ["-c"],
@@ -650,18 +663,6 @@ class LlamaLauncherApp:
         if self._poll_timeout_callback_id is not None:
             self.root.after_cancel(self._poll_timeout_callback_id)
             self._poll_timeout_callback_id = None
-
-    def _poll_stop(self):
-        if not self.server_process or self.server_process.poll() is not None:
-            if self.server_process:
-                try:
-                    self.server_process.wait(timeout=2)
-                except Exception:
-                    pass
-            self._log("Сервер остановлен.")
-            self._on_server_stopped(logged=False)
-            return
-        self._poll_timeout_callback_id = self.root.after(200, self._poll_stop)
 
     def _force_kill(self):
         if self.server_process and self.server_process.poll() is None:
@@ -905,10 +906,6 @@ class LlamaLauncherApp:
             )
             if result is True:
                 self._save_config()
-            elif result is False:
-                pass
-            else:
-                return
         self._stop_title_animation()
         self.root.destroy()
 def main():
