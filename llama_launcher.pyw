@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 _setup_logging()
 
 def _flush_log():
-    global _log_file_handler
     if _log_file_handler:
         _log_file_handler.flush()
         _log_file_handler.close()
@@ -241,6 +240,7 @@ class LlamaLauncherApp:
             "no_mmap": True, "kv_unified": True, "preserve_thinking": True,
             "repeat_penalty": False, "cache_prompt": False,
             "ctx_checkpoints": False, "swa_full": False,
+            "draft_mtp": False, "draft_n_max": False,
         }
         for key, default in adv_defaults.items():
             self.adv_vars[key] = tk.BooleanVar(value=default)
@@ -255,12 +255,14 @@ class LlamaLauncherApp:
             "cache_prompt": "Cache Prompt",
             "ctx_checkpoints": "Ctx Checkpoints",
             "swa_full": "SWA Full",
+            "draft_mtp": "Draft MTP",
+            "draft_n_max": "Draft N-Max",
         }
         for idx, (key, var) in enumerate(self.adv_vars.items()):
             r = idx // 2
             c = idx % 2
             ttk.Checkbutton(right_col, text=labels[key], variable=var).grid(row=r, column=c, sticky='w', padx=(0, 10), pady=2)
-        row = 5
+        row = 6
         ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
         self.extra_args_var = tk.StringVar(value="")
         # Храним ссылку на виджет — нужны биндинги для буфера обмена
@@ -541,6 +543,10 @@ class LlamaLauncherApp:
             cmd.extend(["--ctx-checkpoints", "64"])
         if self.adv_vars["swa_full"].get():
             cmd.append("--swa-full")
+        if self.adv_vars["draft_mtp"].get():
+            cmd.extend(["--spec-type", "draft-mtp"])
+        if self.adv_vars["draft_n_max"].get():
+            cmd.extend(["--spec-draft-n-max", "2"])
         extra = self.extra_args_var.get().strip()
         if extra:
             try:
