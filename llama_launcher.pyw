@@ -265,12 +265,9 @@ class LlamaLauncherApp:
         row = 6
         ttk.Label(right_col, text="Доп. аргументы:").grid(row=row, column=0, columnspan=2, sticky='w', pady=(8, 5))
         self.extra_args_var = tk.StringVar(value="")
-        # Храним ссылку на виджет — нужны биндинги для буфера обмена
         self._extra_args_entry_ref = ttk.Entry(right_col, textvariable=self.extra_args_var, width=18)
         self._extra_args_entry_ref.grid(row=row + 1, column=0, columnspan=2, sticky='ew', pady=(0, 5))
 
-        # Перехватываем Ctrl+<буква> до того как ttk.Entry решит keysym.
-        # На русской раскладке Ctrl+C → keysym "Я"; ловим по event.keycode (physical key).
         self._extra_args_entry_ref.bind("<KeyPress>", self._on_extra_key)
         right_col.columnconfigure(0, weight=1)
 
@@ -278,7 +275,6 @@ class LlamaLauncherApp:
         """Перехватываем Ctrl+C / Ctrl+X / Ctrl+V в поле доп. аргументов."""
         if not (event.state & 0x4):
             return "continue"
-        # physical key codes (не зависят от раскладки)
         kc = event.keycode
         try:
             sel_start = self._extra_args_entry_ref.index("sel.first")
@@ -289,13 +285,11 @@ class LlamaLauncherApp:
 
         text = self.extra_args_var.get()
 
-        # Ctrl+C — copy (keycode 67)
         if kc == 67 and has_sel:
             sel_text = text[sel_start:sel_end]
             self.root.clipboard_clear()
             self.root.clipboard_append(sel_text)
             return "break"
-        # Ctrl+X — cut (keycode 88)
         if kc == 88:
             if has_sel:
                 sel_text = text[sel_start:sel_end]
@@ -303,7 +297,6 @@ class LlamaLauncherApp:
                 self.root.clipboard_append(sel_text)
                 self.extra_args_var.set(text[:sel_start] + text[sel_end:])
             return "break"
-        # Ctrl+V — paste (keycode 86)
         if kc == 86:
             try:
                 paste_text = self.root.clipboard_get()
@@ -318,7 +311,6 @@ class LlamaLauncherApp:
                     pos = len(text)
                 self.extra_args_var.set(text[:pos] + paste_text + text[pos:])
             return "break"
-        # Нераспознанный Ctrl+<буква> — отдаём стандартному поведению поля
         return None
 
     def _create_buttons_frame(self, parent):
@@ -387,7 +379,6 @@ class LlamaLauncherApp:
         if not host:
             errors.append("Укажите адрес хоста")
 
-        # (label, min_v, max_v); включённые поля нельзя оставлять пустыми
         server_fields = {
             "port": ("Порт", 1, 65535),
             "context_size": ("Контекст", 1, 1000000),
@@ -676,7 +667,6 @@ class LlamaLauncherApp:
             was_running = True
             try:
                 if sys.platform == "win32":
-                    # os.killpg в win32 нет — достаточно terminate самого процесса
                     self.server_process.kill()
                 else:
                     import signal
@@ -735,12 +725,12 @@ class LlamaLauncherApp:
         if _log_file_handler:
             _log_file_handler.flush()
         try:
-            current_lines = int(float(self.log_text.index('end-1c').split('.')[0]))
-            if current_lines > 5000:
-                remove_count = min(200, current_lines - 1)
+            current_line = int(self.log_text.index('end-1c').split('.')[0])
+            remove_count = max(0, min(current_line - 4800, 200))
             self.log_text.configure(state='normal')
-            if current_lines > 5000:
-                self.log_text.delete(1.0, f"{remove_count}.0")
+            if remove_count > 0:
+                first_kept = current_line - remove_count + 1
+                self.log_text.delete(1.0, f"{first_kept}.0")
             timestamp = datetime.now().strftime("%H:%M:%S")
             self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
             self.log_text.see(tk.END)
