@@ -245,18 +245,18 @@ class LlamaLauncherApp:
         for key, default in adv_defaults.items():
             self.adv_vars[key] = tk.BooleanVar(value=default)
         labels = {
-            "flash_attn": "Flash Attention",
-            "cont_batching": "Continual Batching",
+            "flash_attn": "Flash attention",
+            "cont_batching": "Continual batching",
             "jinja": "Jinja шаблон",
             "no_mmap": "No MMAP (Windows)",
             "kv_unified": "KV Unified",
-            "preserve_thinking": "Preserve Thinking",
-            "repeat_penalty": "Repeat Penalty",
-            "cache_prompt": "Cache Prompt",
-            "ctx_checkpoints": "Ctx Checkpoints",
-            "swa_full": "SWA Full",
+            "preserve_thinking": "Reasoning effort ",
+            "repeat_penalty": "Repeat penalty",
+            "cache_prompt": "Cache prompt",
+            "ctx_checkpoints": "Ctx checkpoints",
+            "swa_full": "SWA full",
             "draft_mtp": "Draft MTP",
-            "draft_n_max": "Draft N-Max",
+            "draft_n_max": "Draft n-max",
         }
         for idx, (key, var) in enumerate(self.adv_vars.items()):
             r = idx // 2
@@ -532,9 +532,9 @@ class LlamaLauncherApp:
         if self.moe_enabled.get("reasoning") and self.moe_enabled["reasoning"].get():
             cmd.extend(["--reasoning-budget", reasoning])
         if self.adv_vars["preserve_thinking"].get():
-            cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":true}'])
+            cmd.extend(["--chat-template-kwargs", '{"reasoning_effort":"medium"}'])
         else:
-            cmd.extend(["--chat-template-kwargs", '{"preserve_thinking":false}'])
+            cmd.extend(["--chat-template-kwargs", '{"reasoning_effort":"none"}'])
         if self.adv_vars["repeat_penalty"].get():
             cmd.extend(["--repeat-penalty", "1.1"])
         if self.adv_vars["cache_prompt"].get():
