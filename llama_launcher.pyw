@@ -250,7 +250,7 @@ class LlamaLauncherApp:
             "jinja": "Jinja шаблон",
             "no_mmap": "No MMAP (Windows)",
             "kv_unified": "KV Unified",
-            "preserve_thinking": "Reasoning effort ",
+            "preserve_thinking": "Reasoning on/off",
             "repeat_penalty": "Repeat penalty",
             "cache_prompt": "Cache prompt",
             "ctx_checkpoints": "Ctx checkpoints",
@@ -532,9 +532,9 @@ class LlamaLauncherApp:
         if self.moe_enabled.get("reasoning") and self.moe_enabled["reasoning"].get():
             cmd.extend(["--reasoning-budget", reasoning])
         if self.adv_vars["preserve_thinking"].get():
-            cmd.extend(["--chat-template-kwargs", '{"reasoning_effort":"medium"}'])
+            cmd.extend(["--reasoning", "on"])
         else:
-            cmd.extend(["--chat-template-kwargs", '{"reasoning_effort":"none"}'])
+            cmd.extend(["--reasoning", "off"])
         if self.adv_vars["repeat_penalty"].get():
             cmd.extend(["--repeat-penalty", "1.1"])
         if self.adv_vars["cache_prompt"].get():
