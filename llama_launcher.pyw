@@ -393,7 +393,7 @@ class LlamaLauncherApp:
             "context_size": ("Контекст", 1, 1000000),
             "gpu_layers": ("GPU слои", -1, 999),
             "threads": ("Потоки CPU", 1, 1024),
-            "batch_size": ("Batch size", 1, 4096),
+            "batch_size": ("Batch size", 1, 8192),
             "ubatch_size": ("UBatch size", 1, 4096),
         }
         for key, (label, min_v, max_v) in server_fields.items():
